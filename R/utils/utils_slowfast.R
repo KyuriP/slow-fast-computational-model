@@ -1,4 +1,4 @@
-# ============================================================
+## ============================================================
 # Slow-fast simulation utilities
 # ============================================================
 # Active simulation functions:
@@ -11,6 +11,12 @@
 #       time-varying baseline version for hysteresis experiments
 #   - make_ramp_Pbase()
 #       helper for up-then-down baseline forcing
+#
+# Note on notation:
+#   In the manuscript, the baseline shock hazard is written as lambda_0.
+#   In this code, that baseline hazard is implemented as lambda_exo.
+#   The endogenous hazard increment is implemented as
+#     lambda1 * max(0, m_slow - m_crit).
 # ============================================================
 
 plan(multisession, workers = max(1, parallel::detectCores() - 1))
@@ -60,6 +66,7 @@ simulate_slowfast_cw01_v3 <- function(
     shock_mode = c("none", "exo", "endo", "both"),
     
     # exogenous shocks
+    # manuscript notation: this corresponds to baseline hazard lambda_0
     lambda_exo   = 0.0,
     shock_mu_exo = 0.0,
     shock_sd_exo = 0.0,
@@ -85,8 +92,10 @@ simulate_slowfast_cw01_v3 <- function(
   m_fast[1] <- m0
   m_slow[1] <- m0
   
+  # initialize symptom nodes with mean approximately m0
   s <- stats::rbinom(n_nodes, 1, m0)
   
+  # helper: convert continuous-time hazard to per-step Bernoulli probability
   hazard_to_p <- function(lambda){
     lambda <- max(0, lambda)
     p <- 1 - exp(-lambda * dt)
@@ -96,7 +105,7 @@ simulate_slowfast_cw01_v3 <- function(
   
   for (t in 1:(T_steps - 1)) {
     
-    # fast-layer update at fixed P_t
+    # ---- 1) fast-layer update at fixed P_t ----
     s <- ising_fast_step01(
       P = P[t], s = s,
       beta = beta, J = J, h0 = h0, gammaP = gammaP,
@@ -104,16 +113,17 @@ simulate_slowfast_cw01_v3 <- function(
     )
     m_fast[t] <- mean(s)
     
-    # slow symptom memory
+    # ---- 2) slow symptom memory (EWMA) ----
     m_slow[t+1] <- m_slow[t] + lambda_m * (m_fast[t] - m_slow[t])
     
-    # slow contextual drift + diffusion
+    # ---- 3) continuous slow drift + diffusion ----
     drift <- -kappa * (P[t] - P_base) + b * (m_slow[t] - m_star)
     dW    <- stats::rnorm(1, 0, sigmaP * sqrt(dt))
     
-    # shock process
+    # ---- 4) optional shock process ----
     if (shock_mode != "none") {
       
+      # endogenous hazard activates only above m_crit
       lambda_endo_t <- lambda1 * max(0, m_slow[t] - m_crit)
       lambda_endo_t <- max(0, lambda_endo_t)
       
@@ -139,11 +149,14 @@ simulate_slowfast_cw01_v3 <- function(
         
       } else if (shock_mode == "both") {
         
+        # one shock maximum per step using the total hazard
         lambda_tot <- lambda_exo + lambda_endo_t
         p <- hazard_to_p(lambda_tot)
         
         if (stats::rbinom(1, 1, p) == 1) {
           
+          # classify the realized shock as exogenous vs endogenous
+          # according to the relative hazard contribution
           w_endo  <- if (lambda_tot > 0) lambda_endo_t / lambda_tot else 0
           is_endo <- (stats::runif(1) < w_endo)
           
@@ -162,7 +175,7 @@ simulate_slowfast_cw01_v3 <- function(
       }
     }
     
-    # update context
+    # ---- 5) update slow context ----
     P[t+1] <- P[t] + dt * drift + dW + shock_exo[t] + shock_endo[t]
     
     if (!is.finite(P[t+1])) {
@@ -173,6 +186,7 @@ simulate_slowfast_cw01_v3 <- function(
     }
   }
   
+  # carry last fast burden forward
   m_fast[T_steps] <- m_fast[T_steps - 1]
   
   tibble::tibble(
@@ -189,6 +203,8 @@ simulate_slowfast_cw01_v3 <- function(
 # ------------------------------------------------------------
 # Older baseline simulator: constant P_base, no shocks
 # ------------------------------------------------------------
+# Earlier no-shock coupled slow-fast version used for baseline comparisons
+# before the jump-process extension.
 simulate_slowfast_cw01 <- function(
     T_steps  = 4000,
     dt       = 0.02,
@@ -223,6 +239,8 @@ simulate_slowfast_cw01 <- function(
   s <- stats::rbinom(n_nodes, 1, m0)
   
   for (t in 1:(T_steps - 1)) {
+    
+    # fast-layer update at fixed P_t
     s <- ising_fast_step01(
       P = P[t], s = s,
       beta = beta, J = J, h0 = h0, gammaP = gammaP,
@@ -230,10 +248,13 @@ simulate_slowfast_cw01 <- function(
     )
     m_fast[t] <- mean(s)
     
+    # slow symptom memory
     m_slow[t+1] <- m_slow[t] + lambda_m * (m_fast[t] - m_slow[t])
     
+    # slow contextual drift toward fixed baseline
     drift <- -kappa * (P[t] - P_base) + b * (m_slow[t] - m_star)
     
+    # Euler-Maruyama update
     P[t+1] <- P[t] + dt * drift + stats::rnorm(1, 0, sigmaP * sqrt(dt))
   }
   
@@ -250,6 +271,9 @@ simulate_slowfast_cw01 <- function(
 # ------------------------------------------------------------
 # Time-varying baseline simulator for hysteresis experiments
 # ------------------------------------------------------------
+# This version replaces the fixed group baseline P_base with a
+# user-supplied function P_base_fun(t), allowing up/down ramp
+# experiments and other nonstationary forcing protocols.
 simulate_slowfast_cw01_timevaryingPbase <- function(
     T_steps    = 6000,
     dt         = 0.02,
@@ -287,6 +311,7 @@ simulate_slowfast_cw01_timevaryingPbase <- function(
   for (t in 1:(T_steps - 1)) {
     P_base[t] <- P_base_fun(t)
     
+    # fast-layer update
     s <- ising_fast_step01(
       P = P[t], s = s,
       beta = beta, J = J, h0 = h0, gammaP = gammaP,
@@ -294,10 +319,13 @@ simulate_slowfast_cw01_timevaryingPbase <- function(
     )
     m_fast[t] <- mean(s)
     
+    # slow symptom memory
     m_slow[t+1] <- m_slow[t] + lambda_m * (m_fast[t] - m_slow[t])
     
+    # drift toward moving baseline
     drift <- -kappa * (P[t] - P_base[t]) + b * (m_slow[t] - m_star)
     
+    # Euler-Maruyama update
     P[t+1] <- P[t] + dt * drift + stats::rnorm(1, 0, sigmaP * sqrt(dt))
   }
   
