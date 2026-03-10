@@ -236,6 +236,8 @@ compute_switch_metrics <- function(sim_all, bif_info, burn_in = 500) {
 #   P0_init:
 #       NULL -> P0 = P_base for each group
 #       numeric -> common initial P0 for all groups (helps comparability)
+#   m0_init:
+#       common initial symptom burden for all groups/replicates
 run_scenario_diagnostics_v3 <- function(
     scenario_name,
     par_fast,
@@ -248,6 +250,7 @@ run_scenario_diagnostics_v3 <- function(
     burn_in    = 500,
     parallel   = TRUE,
     P0_init    = NULL,
+    m0_init    = 0.05,
     P_grid     = seq(-2, 2, length.out = 400),
     sim_fn     = simulate_slowfast_cw01_v3
 ){
@@ -286,8 +289,9 @@ run_scenario_diagnostics_v3 <- function(
     
     P0_use <- if (is.null(P0_init)) P_base else P0_init
     
+    # Common initial conditions for this task
     sim <- do.call(sim_fn, c(
-      list(T_steps = T_steps, P_base = P_base, P0 = P0_use, m0 = 0.05, seed = seed_i),
+      list(T_steps = T_steps, P_base = P_base, P0 = P0_use, m0 = m0_init, seed = seed_i),
       par_fast,
       ps
     ))
