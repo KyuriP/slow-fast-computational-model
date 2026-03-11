@@ -3,16 +3,16 @@
 # ============================================================
 # Purpose
 # -------
-# Reproducible parameter selection for the final B-family scenarios:
-#   1) Select a no-shock B0 setting
-#   2) Select a both-shocks B+S setting conditional on B0
-#   3) Save the final tuning object to res/final_params.rds
+# Calibrate the B-family scenario settings used in the final paper:
+#   1) choose a no-shock B0 configuration
+#   2) choose a both-shocks B+S configuration conditional on B0
+#   3) save the selected parameter object for downstream scripts
 #
 # Output
 # ------
-#   res/final_params.rds
-#   res/b0_table.rds
-#   res/bb_table.rds
+#   res/tuned/final_params.rds
+#   res/tuned/b0_table.rds
+#   res/tuned/bb_table.rds
 # ============================================================
 
 suppressPackageStartupMessages({
@@ -35,7 +35,7 @@ set.seed(123)
 RNGkind("L'Ecuyer-CMRG")
 plan(multisession, workers = max(1, parallel::detectCores() - 3))
 
-# dir.create("res", showWarnings = FALSE, recursive = TRUE)
+# dir.create("res/tuned", showWarnings = FALSE, recursive = TRUE)
 
 # ------------------------------------------------------------
 # 1) Fast-layer parameterizations
@@ -207,7 +207,7 @@ b0_table <- furrr::future_pmap_dfr(
   .progress = TRUE
 )
 
-# saveRDS(b0_table, "res/b0_table.rds")
+# saveRDS(b0_table, "res/tuned/b0_table.rds")
 
 best_row_B0 <- b0_table %>%
   arrange(desc(score)) %>%
@@ -325,7 +325,7 @@ bb_table <- furrr::future_map_dfr(
   .progress = TRUE
 )
 
-# saveRDS(bb_table, "res/bb_table.rds")
+# saveRDS(bb_table, "res/tuned/bb_table.rds")
 
 best_bb <- bb_table %>%
   arrange(desc(score)) %>%
@@ -343,7 +343,7 @@ final_params <- list(
   best_bb     = best_bb
 )
 
-# saveRDS(final_params, "res/final_params.rds")
+# saveRDS(final_params, "res/tuned/final_params.rds")
 
 cat("\nBest B0:\n")
 print(best_row_B0)
