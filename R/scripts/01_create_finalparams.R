@@ -24,9 +24,9 @@ suppressPackageStartupMessages({
   library(furrr)
 })
 
-source("R/utils_fastlayer.R")
-source("R/utils_slowfast.R")
-source("R/utils_diagnostics.R")
+source("R/utils/utils_fastlayer.R")
+source("R/utils/utils_slowfast.R")
+source("R/utils/utils_diagnostics.R")
 
 # ------------------------------------------------------------
 # Reproducible parallel RNG
@@ -35,7 +35,7 @@ set.seed(123)
 RNGkind("L'Ecuyer-CMRG")
 plan(multisession, workers = max(1, parallel::detectCores() - 3))
 
-dir.create("res", showWarnings = FALSE, recursive = TRUE)
+# dir.create("res", showWarnings = FALSE, recursive = TRUE)
 
 # ------------------------------------------------------------
 # 1) Fast-layer parameterizations

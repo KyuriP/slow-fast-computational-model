@@ -34,9 +34,9 @@ suppressPackageStartupMessages({
   library(ggplot2)
 })
 
-source("R/utils_fastlayer.R")
-source("R/utils_slowfast.R")
-source("R/utils_diagnostics.R")
+source("R/utils/utils_fastlayer.R")
+source("R/utils/utils_slowfast.R")
+source("R/utils/utils_diagnostics.R")
 
 # ------------------------------------------------------------
 # Reproducible parallel RNG
