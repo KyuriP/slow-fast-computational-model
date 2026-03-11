@@ -1,5 +1,5 @@
 # ============================================================
-# figures_make_all.R
+# 05_figures_make_all.R
 # ============================================================
 # Purpose
 # -------
@@ -12,19 +12,19 @@
 #
 # Required inputs
 # ---------------
-#   res_clean/res_A_clean.rds
-#   res_clean/res_AS_clean.rds
-#   res_clean/res_B0_clean.rds
-#   res_clean/res_BS_clean.rds
-#   res_clean/heat_zoom_noshock_hyst2.rds
-#   res/sim_B2.rds
+#   res/main/res_A_clean.rds
+#   res/main/res_AS_clean.rds
+#   res/main/res_B0_clean.rds
+#   res/main/res_BS_clean.rds
+#   res/heatmaps/heat_zoom_noshock_hyst2.rds
+#   res/hysteresis/sim_B2.rds
 #
 # Dependencies
 # ------------
-#   R/utils_fastlayer.R
-#   R/utils_slowfast.R
-#   R/utils_diagnostics.R
-#   R/utils_plotting.R
+#   R/utils/utils_fastlayer.R
+#   R/utils/utils_slowfast.R
+#   R/utils/utils_diagnostics.R
+#   R/utils/utils_plotting.R
 # ============================================================
 
 suppressPackageStartupMessages({
@@ -51,10 +51,10 @@ source("R/utils/utils_plotting.R")
 # ------------------------------------------------------------
 # Load final scenario results
 # ------------------------------------------------------------
-res_A  <- readRDS("res_clean/res_A_clean.rds")
-res_AS <- readRDS("res_clean/res_AS_clean.rds")
-res_B0 <- readRDS("res_clean/res_B0_clean.rds")
-res_BS <- readRDS("res_clean/res_BS_clean.rds")
+res_A  <- readRDS("res/main/res_A_clean.rds")
+res_AS <- readRDS("res/main/res_AS_clean.rds")
+res_B0 <- readRDS("res/main/res_B0_clean.rds")
+res_BS <- readRDS("res/main/res_BS_clean.rds")
 
 # ------------------------------------------------------------
 # Shared settings
@@ -237,13 +237,13 @@ strip_cell <- function(label = "", rotate = 0,
                        text_size = 11, fontface = "bold",
                        border = TRUE) {
   grid::grobTree(
-    rectGrob(gp = gpar(
+    grid::rectGrob(gp = gpar(
       fill = if (border) fill else NA,
       col  = if (border) line_col else NA,
       lwd  = if (border) 0.8 else 0
     )),
     grid::textGrob(label, rot = rotate,
-             gp = gpar(fontsize = text_size, fontface = fontface))
+             gp = grid::gpar(fontsize = text_size, fontface = fontface))
   )
 }
 
@@ -452,7 +452,7 @@ p_ens
 # ggsave("img/ensemble_ts2.pdf", p_ens, width = 10, height = 9)
 
 # ============================================================
-# Heatmap figure 
+# 4) HEATMAP FIGURE 
 # ============================================================
 
 heat_zoom <- readRDS("res_clean/heat_zoom_noshock_hyst2.rds") |>
@@ -549,7 +549,7 @@ fig_heat2
 # 5) HYSTERESIS FIGURE
 # ============================================================
 
-sim_B2 <- readRDS("res/sim_B2.rds")
+sim_B2 <- readRDS("res/hysteresis/sim_B2.rds")
 
 dfB <- sim_B2 %>%
   mutate(
