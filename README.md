@@ -4,6 +4,7 @@ This repository contains the simulation code, parameter-tuning workflow, and fig
 
 ## Repository structure
 
+```
 slow-fast-linking/
 ├── README.md
 ├── .gitignore
@@ -45,28 +46,21 @@ slow-fast-linking/
 │   └── archive/
 │       └── ... historical intermediate RDS files ...
 │
-├── figures
-│
-├── docs/
-│   ├── qmd/
-│   │   ├── theoretical_slowfast2.qmd
-│   │   ├── theoretical_slowfast3.qmd
-│   │   ├── theoretical_slowfast4.qmd
-│   │   ├── theoretical_slowfast5_shock.qmd
-│   │   └── timeseparation.qmd
-│   ├── rendered/
-│   │   ├── theoretical_slowfast2.html
-│   │   ├── theoretical_slowfast3.html
-│   │   ├── theoretical_slowfast4.html
-│   │   ├── theoretical_slowfast5_shock.html
-│   │   └── timeseparation.html
-│   └── working/
-│       └── working_funcs.R
-│
-└── cache/
-    └── quarto/
-        └── ... all *_files/, *_cache/, libs/, figure-html/, html cache dirs ...
-
+├── figures/
+│   └── ... exported figures, gifs, and illustrations ...│
+└── quarto-docs/
+    ├── theoretical_slowfast2.qmd
+    ├── theoretical_slowfast3.qmd
+    ├── theoretical_slowfast4.qmd
+    ├── theoretical_slowfast5_shock.qmd
+    ├── timeseparation.qmd
+    ├── theoretical_slowfast2.html
+    ├── theoretical_slowfast3.html
+    ├── theoretical_slowfast4.html
+    ├── theoretical_slowfast5_shock.html
+    ├── timeseparation.html
+    └── working_funcs.R
+```
 
 ## Main scenario scripts
 
