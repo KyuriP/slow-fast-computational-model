@@ -1,3 +1,32 @@
+# ============================================================
+# figures_make_all.R
+# ============================================================
+# Purpose
+# -------
+# Create the main manuscript figures from the final saved results:
+#   1) Faceted representative trajectories (A/B × shocks)
+#   2) Faceted bifurcation overlays (A/B × shocks)
+#   3) Faceted ensemble trajectories
+#   4) Heatmap figure from saved no-shock regime scan
+#   5) Hysteresis figure from saved ramp simulation
+#
+# Required inputs
+# ---------------
+#   res_clean/res_A_clean.rds
+#   res_clean/res_AS_clean.rds
+#   res_clean/res_B0_clean.rds
+#   res_clean/res_BS_clean.rds
+#   res_clean/heat_zoom_noshock_hyst2.rds
+#   res/sim_B2.rds
+#
+# Dependencies
+# ------------
+#   R/utils_fastlayer.R
+#   R/utils_slowfast.R
+#   R/utils_diagnostics.R
+#   R/utils_plotting.R
+# ============================================================
+
 suppressPackageStartupMessages({
   library(dplyr)
   library(tidyr)
@@ -11,27 +40,86 @@ suppressPackageStartupMessages({
   library(cowplot)
 })
 
-# ============================================================
-# Assumed objects already available in session
 # ------------------------------------------------------------
-# res_A, res_AS, res_B0, res_BS
-# sim_A_rep, sim_AS_rep, sim_B0_rep, sim_BS_rep
-# pal
-# burn_final
-# folds_to_df()
-# shock_times()
-# plot_branch_overlay()
-# pick_representative_reps()
-# ============================================================
+# Source shared utilities
+# ------------------------------------------------------------
+source("R/utils/utils_fastlayer.R")
+source("R/utils/utils_slowfast.R")
+source("R/utils/utils_diagnostics.R")
+source("R/utils/utils_plotting.R")
+
+# ------------------------------------------------------------
+# Load final scenario results
+# ------------------------------------------------------------
+res_A  <- readRDS("res_clean/res_A_clean.rds")
+res_AS <- readRDS("res_clean/res_AS_clean.rds")
+res_B0 <- readRDS("res_clean/res_B0_clean.rds")
+res_BS <- readRDS("res_clean/res_BS_clean.rds")
+
+# ------------------------------------------------------------
+# Shared settings
+# ------------------------------------------------------------
+burn_final <- 500
+
+pal <- c(
+  "Low baseline context"  = "#7ABD7D",
+  "High baseline context" = "#FF5733"
+)
+
+scenario_labels <- c(
+  A = "A (monostable)",
+  B = "B (bistable)"
+)
+
+shock_labels <- c(
+  No  = "No shocks",
+  Yes = "Shocks"
+)
+
+# ------------------------------------------------------------
+# Representative replicate extraction
+# ------------------------------------------------------------
+pick_representative_reps <- function(metrics_df) {
+  stopifnot(all(c("group", "rep", "mean_m") %in% names(metrics_df)))
+  
+  if ("scenario" %in% names(metrics_df)) {
+    metrics_df %>%
+      group_by(scenario, group) %>%
+      mutate(target = mean(mean_m, na.rm = TRUE)) %>%
+      slice_min(abs(mean_m - target), n = 1, with_ties = FALSE) %>%
+      ungroup() %>%
+      select(scenario, group, rep)
+  } else {
+    metrics_df %>%
+      group_by(group) %>%
+      mutate(target = mean(mean_m, na.rm = TRUE)) %>%
+      slice_min(abs(mean_m - target), n = 1, with_ties = FALSE) %>%
+      ungroup() %>%
+      select(group, rep)
+  }
+}
+
+get_rep_sim <- function(res_obj) {
+  rep_pick <- pick_representative_reps(res_obj$metrics) %>%
+    select(group, rep)
+  
+  res_obj$sim_all %>%
+    inner_join(rep_pick, by = c("group", "rep"))
+}
+
+sim_A_rep  <- get_rep_sim(res_A)
+sim_AS_rep <- get_rep_sim(res_AS)
+sim_B0_rep <- get_rep_sim(res_B0)
+sim_BS_rep <- get_rep_sim(res_BS)
 
 # ============================================================
-# 1) Faceted representative trajectories: A/B x shocks
+# 1) FACETED REPRESENTATIVE TRAJECTORIES
 # ============================================================
 
-scenario_levels <- c("A", "B")
-scenario_labels <- c("A (monostable)", "B (bistable)")
-shock_levels    <- c("No", "Yes")
-shock_labels    <- c("No shocks", "Shocks")
+scenario_levels_traj <- c("A", "B")
+scenario_labels_traj <- c("A (monostable)", "B (bistable)")
+shock_levels_traj    <- c("No", "Yes")
+shock_labels_traj    <- c("No shocks", "Shocks")
 
 sim_rep_all <- bind_rows(
   sim_A_rep  %>% mutate(scenario = "A", shocks = "No"),
@@ -40,8 +128,8 @@ sim_rep_all <- bind_rows(
   sim_BS_rep %>% mutate(scenario = "B", shocks = "Yes")
 ) %>%
   mutate(
-    scenario = factor(scenario, levels = scenario_levels, labels = scenario_labels),
-    shocks   = factor(shocks, levels = shock_levels, labels = shock_labels),
+    scenario = factor(scenario, levels = scenario_levels_traj, labels = scenario_labels_traj),
+    shocks   = factor(shocks,   levels = shock_levels_traj,    labels = shock_labels_traj),
     group    = factor(group, levels = names(pal))
   )
 
@@ -52,9 +140,9 @@ long_ts <- sim_rep_all %>%
     series = factor(series, levels = c("P", "m"), labels = c("P[t]", "m[t]"))
   )
 
+shock_lines <- NULL
 has_shock_cols <- any(c("shock_any", "shock", "shock_exo", "shock_endo") %in% names(sim_rep_all))
 
-shock_lines <- NULL
 if (has_shock_cols) {
   shock_lines <- sim_rep_all %>%
     group_by(scenario, shocks) %>%
@@ -68,15 +156,15 @@ if (has_shock_cols) {
 }
 
 burn_label_df <- tibble(
-  scenario = factor(scenario_labels[1], levels = levels(long_ts$scenario)),
-  shocks   = factor(shock_labels[1], levels = levels(long_ts$shocks)),
+  scenario = factor(scenario_labels_traj[1], levels = levels(long_ts$scenario)),
+  shocks   = factor(shock_labels_traj[1],    levels = levels(long_ts$shocks)),
   series   = factor("P[t]", levels = levels(long_ts$series)),
   x        = burn_final * 0.35,
   y        = Inf,
   lab      = "Burn-in"
 )
 
-p_ts_faceted <- ggplot(long_ts, aes(t, value, colour = group)) +
+fig_traj_faceted <- ggplot(long_ts, aes(t, value, colour = group)) +
   annotate(
     "rect",
     xmin = -Inf, xmax = burn_final,
@@ -93,15 +181,17 @@ p_ts_faceted <- ggplot(long_ts, aes(t, value, colour = group)) +
     hjust = 0
   ) +
   geom_line(alpha = 0.90, linewidth = 0.6, key_glyph = "path") +
-  {if (!is.null(shock_lines) && nrow(shock_lines) > 0)
-    geom_vline(
-      data = shock_lines,
-      aes(xintercept = t, colour = group),
-      linetype = "dashed",
-      linewidth = 0.35,
-      alpha = 0.9,
-      show.legend = FALSE
-    )
+  {
+    if (!is.null(shock_lines) && nrow(shock_lines) > 0) {
+      geom_vline(
+        data = shock_lines,
+        aes(xintercept = t, colour = group),
+        linetype = "dashed",
+        linewidth = 0.35,
+        alpha = 0.9,
+        show.legend = FALSE
+      )
+    }
   } +
   ggh4x::facet_nested(
     rows = vars(scenario, series),
@@ -121,13 +211,12 @@ p_ts_faceted <- ggplot(long_ts, aes(t, value, colour = group)) +
     strip.text.x = element_text(size = 11, face = "bold")
   )
 
-p_ts_faceted
+fig_traj_faceted
 
-# ggsave("img/example_ts.png", p_ts_faceted, width = 10, height = 9)
-
+# ggsave("img/example_ts.png", fig_traj_faceted, width = 10, height = 9)
 
 # ============================================================
-# 2) Final overlay figure: 2 x 2, facet-style strips
+# 2) FACETED BIFURCATION OVERLAYS
 # ============================================================
 
 strip_titles <- function(p) p + labs(title = NULL, subtitle = NULL)
@@ -140,20 +229,20 @@ legend_dot_fix <- function(p, alpha = 0.9, size = 2.5) {
 plot_margin_fix <- theme(plot.margin = margin(8, 8, 8, 8))
 
 axis_base  <- theme(axis.title.x = element_blank(), axis.title.y = element_blank())
-axis_top   <- theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
-axis_right <- theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
+axis_top   <- theme(axis.text.x  = element_blank(), axis.ticks.x = element_blank())
+axis_right <- theme(axis.text.y  = element_blank(), axis.ticks.y = element_blank())
 
 strip_cell <- function(label = "", rotate = 0,
                        fill = "grey95", line_col = "grey30",
                        text_size = 11, fontface = "bold",
                        border = TRUE) {
-  grobTree(
+  grid::grobTree(
     rectGrob(gp = gpar(
       fill = if (border) fill else NA,
       col  = if (border) line_col else NA,
       lwd  = if (border) 0.8 else 0
     )),
-    textGrob(label, rot = rotate,
+    grid::textGrob(label, rot = rotate,
              gp = gpar(fontsize = text_size, fontface = fontface))
   )
 }
@@ -194,7 +283,7 @@ xlab_grob <- wrap_elements(
 )
 
 row_A  <- wrap_elements(full = strip_cell("A (monostable)", rotate = 270))
-row_B  <- wrap_elements(full = strip_cell("B (bistable)", rotate = 270))
+row_B  <- wrap_elements(full = strip_cell("B (bistable)",   rotate = 270))
 
 col_no <- wrap_elements(full = strip_cell("No shocks"))
 col_sh <- wrap_elements(full = strip_cell("Shocks"))
@@ -212,7 +301,7 @@ facet_overlay_right_strips <-
     d = pA,     e = pAS,    f = row_A,
     g = pB0,    h = pBS,    i = row_B,
     j = xlab_grob, k = plot_spacer(),
-    l = ga,       m = plot_spacer(),
+    l = ga, m = plot_spacer(),
     design = "
       abc
       def
@@ -236,30 +325,30 @@ y_lab <- grid::textGrob(
   gp = grid::gpar(fontsize = 12)
 )
 
-p_overlay_final <- cowplot::ggdraw() +
+fig_overlay_faceted <- cowplot::ggdraw() +
   cowplot::draw_grob(y_lab, x = 0.03, y = 0.5, width = 0.04, height = 0.1) +
   cowplot::draw_plot(facet_overlay_right_strips, x = 0.06, y = 0, width = 0.94, height = 1)
 
-p_overlay_final
+fig_overlay_faceted
 
-ggsave("img/example_overlay.pdf", p_overlay_final, width = 10, height = 7)
-
+# ggsave("img/example_overlay.pdf", fig_overlay_faceted, width = 10, height = 7)
 
 # ============================================================
-# 3) Final ensemble figure
+# 3) FACETED ENSEMBLE FIGURE
 # ============================================================
 
-meta <- tibble::tibble(
+meta_ens <- tibble::tibble(
+  key      = c("A0", "AS", "B0", "BS"),
   res      = list(res_A, res_AS, res_B0, res_BS),
   scenario = c("A (monostable)", "A (monostable)", "B (bistable)", "B (bistable)"),
   shocks   = c("No shocks", "Shocks", "No shocks", "Shocks")
 ) %>%
   mutate(
     scenario = factor(scenario, levels = c("A (monostable)", "B (bistable)")),
-    shocks   = factor(shocks, levels = c("No shocks", "Shocks"))
+    shocks   = factor(shocks,   levels = c("No shocks", "Shocks"))
   )
 
-extract_sim <- function(res_obj, scenario, shocks) {
+extract_sim_ensemble <- function(res_obj, scenario, shocks) {
   res_obj$sim_all %>%
     select(any_of(c("t", "group", "rep", "P", "m"))) %>%
     mutate(
@@ -269,8 +358,8 @@ extract_sim <- function(res_obj, scenario, shocks) {
     )
 }
 
-sim_ens <- pmap_dfr(meta, \(res, scenario, shocks) {
-  extract_sim(res, scenario, shocks)
+sim_ens <- pmap_dfr(meta_ens, \(key, res, scenario, shocks) {
+  extract_sim_ensemble(res, scenario, shocks)
 }) %>%
   filter(t > burn_final)
 
@@ -362,135 +451,102 @@ p_ens
 
 # ggsave("img/ensemble_ts2.pdf", p_ens, width = 10, height = 9)
 
-
 # ============================================================
-# 4) Final heatmap figure
+# Heatmap figure 
 # ============================================================
 
-heat_zoom <- readRDS("res_clean/heat_zoom_noshock_hyst2.rds") %>%
+heat_zoom <- readRDS("res_clean/heat_zoom_noshock_hyst2.rds") |>
   mutate(
     betaJ  = as.numeric(betaJ),
     P_base = as.numeric(P_base)
-  ) %>%
-  arrange(betaJ, P_base)
-
-req <- c("betaJ", "P_base", "Pr_high", "Switches", "MeanHighDur")
-stopifnot(all(req %in% names(heat_zoom)))
-
-heat_theme <- theme_minimal(base_size = 11) +
-  theme(
-    panel.grid = element_blank(),
-    legend.position = "bottom",
-    legend.box = "vertical",
-    legend.title = element_text(size = 9),
-    legend.text = element_text(size = 8),
-    plot.title.position = "plot",
-    plot.title = element_text(face = "bold", size = 11),
-    axis.title = element_text(size = 10),
-    axis.text = element_text(size = 9)
   )
 
-heat_axes <- list(
-  scale_x_continuous(expand = c(0, 0), breaks = scales::pretty_breaks(5)),
-  scale_y_continuous(expand = c(0, 0), breaks = scales::pretty_breaks(5)),
-  coord_cartesian(expand = FALSE)
+base_theme <- theme_bw(base_size = 13) +
+  theme(
+    panel.grid = element_blank(),
+    panel.border = element_blank(),
+    axis.line = element_line(linewidth = 0.6),
+    plot.title = element_text(face = "bold", hjust = 0, size = 14),
+    plot.subtitle = element_text(hjust = 0, size = 10),
+    axis.title = element_text(size = 13),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 11),
+    legend.position = "bottom",
+    plot.margin = margin(6, 6, 6, 6)
+  )
+
+cb_pr <- guide_colorbar(
+  barwidth = unit(9, "cm"),
+  barheight = unit(0.35, "cm"),
+  title.position = "left"
 )
 
-betaJ_threshold_layer <- list(
-  geom_vline(xintercept = 4, linetype = "dashed", linewidth = 0.45, colour = "grey20")
+cb_sw <- guide_colorbar(
+  barwidth = unit(9, "cm"),
+  barheight = unit(0.35, "cm"),
+  title.position = "left"
 )
 
-p_frac <- ggplot(heat_zoom, aes(x = betaJ, y = P_base, fill = Pr_high)) +
-  geom_tile() +
-  geom_contour(
-    aes(z = Pr_high),
-    breaks = 0.5,
-    colour = "black",
-    linewidth = 0.45
-  ) +
-  betaJ_threshold_layer +
-  scale_fill_gradient2(
-    low = "#3B4CC0", mid = "white", high = "#B40426",
-    midpoint = 0.5, limits = c(0, 1),
-    breaks = c(0, 0.25, 0.5, 0.75, 1),
-    labels = scales::label_number(accuracy = 0.01),
-    name = "Pr(high)"
+p_frac <- ggplot(heat_zoom, aes(betaJ, P_base)) +
+  geom_tile(aes(fill = Pr_high)) +
+  scale_fill_viridis_c(
+    option = "plasma",
+    limits = c(0, 1),
+    name = expression(f[high]),
+    guide = cb_pr
   ) +
   labs(
-    title = "A. Occupancy of high-symptom mode",
+    title = "High-state occupancy",
+    subtitle = "Fraction of time labeled high",
     x = expression(beta * J),
     y = expression(P[base])
   ) +
-  heat_axes +
-  heat_theme +
-  guides(fill = guide_colorbar(
-    barwidth = unit(8, "cm"),
-    barheight = unit(0.35, "cm"),
-    title.position = "top"
-  ))
-
-p_sw <- ggplot(heat_zoom, aes(x = betaJ, y = P_base, fill = Switches)) +
-  geom_tile() +
-  betaJ_threshold_layer +
-  scale_fill_viridis_c(
-    option = "magma",
-    trans = "sqrt",
-    name = "Switches\n(sqrt scale)"
-  ) +
-  labs(
-    title = "B. Switching frequency",
-    x = expression(beta * J),
-    y = NULL
-  ) +
-  heat_axes +
-  heat_theme +
-  guides(fill = guide_colorbar(
-    barwidth = unit(4.2, "cm"),
-    barheight = unit(0.35, "cm"),
-    title.position = "top"
-  ))
-
-p_dur <- ggplot(heat_zoom, aes(x = betaJ, y = P_base, fill = MeanHighDur)) +
-  geom_tile() +
-  betaJ_threshold_layer +
-  scale_fill_viridis_c(
-    option = "plasma",
-    name = "Mean high\nduration"
-  ) +
-  labs(
-    title = "C. Mean duration of high episodes",
-    x = expression(beta * J),
-    y = NULL
-  ) +
-  heat_axes +
-  heat_theme +
-  guides(fill = guide_colorbar(
-    barwidth = unit(4.2, "cm"),
-    barheight = unit(0.35, "cm"),
-    title.position = "top"
-  ))
-
-right_col <- p_sw / p_dur + plot_layout(heights = c(1, 1))
-
-heat_fig <- (p_frac | right_col) +
-  plot_layout(widths = c(1.25, 1), guides = "collect") +
-  plot_annotation(
-    title = "Hysteresis heatmaps (no shocks): occupancy, switching, and dwell-time structure over parameter space",
-    subtitle = "Contour in panel A marks Pr(high) = 0.5. Dashed vertical line indicates the fast-layer threshold βJ = 4."
-  ) &
+  base_theme +
   theme(
-    legend.position = "bottom",
-    plot.title = element_text(face = "bold", size = 13),
-    plot.subtitle = element_text(size = 10)
+    legend.title = element_text(margin = margin(r = 12))
   )
 
-heat_fig
+p_sw <- ggplot(heat_zoom, aes(betaJ, P_base)) +
+  geom_tile(aes(fill = Switches)) +
+  scale_fill_viridis_c(
+    option = "plasma",
+    trans = "sqrt",
+    name = expression(N[switch]),
+    guide = cb_sw
+  ) +
+  labs(
+    title = "Switching frequency",
+    subtitle = expression("Mean number of switches (" * N[switch] * ")"),
+    x = expression(beta * J),
+    y = NULL
+  ) +
+  base_theme +
+  theme(
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    legend.title = element_text(margin = margin(r = 12))
+  )
 
-# ggsave("img/Figure_heatmaps_2panel_plasma_clean.pdf", heat_fig, width = 10, height = 6)
+fig_heat2 <- (p_frac | p_sw) +
+  plot_layout(
+    widths = c(1, 1),
+    guides = "collect"
+  ) +
+  plot_annotation(tag_levels = "A") &
+  theme(
+    legend.position = "bottom",
+    plot.margin = margin(6, 6, 6, 6),
+    panel.spacing = unit(2, "mm")
+  )
+
+fig_heat2
+
+# ggsave("img/Figure_heatmaps.png", fig_heat2, width = 10, height = 6)
+# ggsave("img/Figure_heatmaps_2panel_plasma_clean.pdf", fig_heat2, width = 10, height = 6)
 
 
 # ============================================================
-# 5) Final hysteresis figure
+# 5) HYSTERESIS FIGURE
 # ============================================================
 
 sim_B2 <- readRDS("res/sim_B2.rds")
@@ -514,6 +570,7 @@ dfB <- dfB %>%
 detect_jumps <- function(x, t, thr = 0.40, min_gap = 30) {
   idx_raw <- which(abs(diff(x)) > thr) + 1L
   if (length(idx_raw) == 0) return(integer(0))
+  
   keep <- c(TRUE, diff(t[idx_raw]) >= min_gap)
   idx_raw[keep]
 }
@@ -541,7 +598,7 @@ phase_rect <- tibble::tibble(
   phase = factor(c("Ramp up", "Ramp down"), levels = c("Ramp up", "Ramp down"))
 )
 
-base_theme <- theme_minimal(base_size = 12) +
+base_theme_hyst <- theme_minimal(base_size = 12) +
   theme(
     panel.grid.minor = element_blank(),
     legend.position = "bottom",
@@ -550,14 +607,16 @@ base_theme <- theme_minimal(base_size = 12) +
     plot.title = element_text(face = "bold", size = 13),
     plot.subtitle = element_text(size = 11),
     axis.title = element_text(size = 12),
-    axis.text = element_text(size = 11)
+    axis.text  = element_text(size = 11)
   )
 
-pP <- ggplot(dfB, aes(x = t)) +
+pP_hyst <- ggplot(dfB, aes(x = t)) +
   geom_rect(
     data = phase_rect,
     aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = phase),
-    inherit.aes = FALSE, alpha = 0.06, colour = NA
+    inherit.aes = FALSE,
+    alpha = 0.06,
+    colour = NA
   ) +
   geom_line(aes(y = P, linetype = "realized"), colour = col_P, linewidth = 0.9) +
   geom_line(aes(y = P_base, linetype = "base"), colour = col_base, linewidth = 0.9) +
@@ -573,11 +632,12 @@ pP <- ggplot(dfB, aes(x = t)) +
   ) +
   scale_fill_manual(values = col_phase, guide = "none") +
   scale_linetype_manual(
+    name = NULL,
     values = c(realized = "solid", base = "dashed"),
     breaks = c("realized", "base"),
     labels = c(
       realized = expression("Realized " * P[t]),
-      base = expression("Imposed " * P[base](t))
+      base     = expression("Imposed " * P[base](t))
     )
   ) +
   guides(
@@ -600,10 +660,10 @@ pP <- ggplot(dfB, aes(x = t)) +
     x = NULL,
     y = expression(P[t])
   ) +
-  base_theme +
+  base_theme_hyst +
   theme(plot.margin = margin(12, 8, 6, 6))
 
-pm <- ggplot(dfB, aes(x = t, y = m)) +
+pm_hyst <- ggplot(dfB, aes(x = t, y = m)) +
   geom_rect(
     data = phase_rect,
     aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = phase),
@@ -624,7 +684,11 @@ pm <- ggplot(dfB, aes(x = t, y = m)) +
   geom_vline(xintercept = jump_t, linetype = "dashed", colour = col_jump, linewidth = 0.45, alpha = 0.8) +
   geom_vline(xintercept = Tup, linetype = "dotted", colour = "grey55", linewidth = 0.5) +
   scale_fill_manual(values = col_phase, guide = "none") +
-  scale_colour_manual(values = col_phase, breaks = c("Ramp up", "Ramp down"), name = NULL) +
+  scale_colour_manual(
+    values = col_phase,
+    breaks = c("Ramp up", "Ramp down"),
+    name = NULL
+  ) +
   labs(
     title = "Symptom trajectory under slow ramp",
     subtitle = "Vertical dashed lines mark abrupt jumps between branches.",
@@ -635,10 +699,10 @@ pm <- ggplot(dfB, aes(x = t, y = m)) +
   scale_y_continuous(expand = expansion(mult = c(0.02, 0.05))) +
   scale_x_continuous(expand = expansion(mult = c(0.01, 0.01))) +
   coord_cartesian(clip = "off") +
-  base_theme +
+  base_theme_hyst +
   theme(plot.margin = margin(6, 8, 6, 6))
 
-ploop <- ggplot(dfB, aes(x = P, y = m, colour = phase)) +
+ploop_hyst <- ggplot(dfB, aes(x = P, y = m, colour = phase)) +
   geom_path(linewidth = 0.8, alpha = 0.8) +
   geom_point(data = jump_pts, aes(P, m), size = 2.2, stroke = 0.5, fill = "white", shape = 21) +
   scale_colour_manual(
@@ -655,11 +719,11 @@ ploop <- ggplot(dfB, aes(x = P, y = m, colour = phase)) +
     x = expression(P[t]),
     y = expression(m[t])
   ) +
-  base_theme
+  base_theme_hyst
 
-left_col <- pP / pm + plot_layout(heights = c(1, 1))
+left_col_hyst <- pP_hyst / pm_hyst + plot_layout(heights = c(1, 1))
 
-hyst_fig <- (left_col | ploop) +
+hyst_fig <- (left_col_hyst | ploop_hyst) +
   plot_layout(widths = c(1.1, 1), guides = "collect") +
   plot_annotation(tag_levels = "A") &
   theme(
@@ -671,4 +735,3 @@ hyst_fig <- (left_col | ploop) +
 hyst_fig
 
 # ggsave("img/Figure_hysteresis.pdf", hyst_fig, width = 13, height = 7)
-

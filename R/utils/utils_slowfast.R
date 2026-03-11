@@ -19,7 +19,6 @@
 #     lambda1 * max(0, m_slow - m_crit).
 # ============================================================
 
-plan(multisession, workers = max(1, parallel::detectCores() - 1))
 
 # ------------------------------------------------------------
 # Final slow-fast simulator (v3)
