@@ -51,14 +51,7 @@ slow-fast-linking/
 └── quarto-docs/
     ├── theoretical_slowfast2.qmd
     ├── theoretical_slowfast3.qmd
-    ├── theoretical_slowfast4.qmd
-    ├── theoretical_slowfast5_shock.qmd
-    ├── timeseparation.qmd
-    ├── theoretical_slowfast2.html
-    ├── theoretical_slowfast3.html
-    ├── theoretical_slowfast4.html
-    ├── theoretical_slowfast5_shock.html
-    ├── timeseparation.html
+    ├── ...
     └── working_funcs.R
 ```
 
