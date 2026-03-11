@@ -47,7 +47,7 @@ slow-fast-linking/
 │       └── ... historical intermediate RDS files ...
 │
 ├── figures/
-│   └── ... exported figures, gifs, and illustrations ...│
+│   └── ... exported figures, gifs, and illustrations ...
 └── quarto-docs/
     ├── theoretical_slowfast2.qmd
     ├── theoretical_slowfast3.qmd
