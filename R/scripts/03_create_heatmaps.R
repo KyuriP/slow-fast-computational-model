@@ -1,5 +1,5 @@
 # ============================================================
-# create_heatmaps.R
+# 03_create_heatmaps.R
 # ============================================================
 # Purpose
 # -------
@@ -8,12 +8,12 @@
 #
 # Output
 # ------
-#   res_clean/heat_zoom_noshock_hyst2.rds
+#   res/heatmaps/heat_zoom_noshock_hyst2.rds
 #
 # Notes
 # -----
 # - This script uses the final no-shock slow parameters from
-#   res/final_params.rds.
+#   res/tuned/final_params.rds.
 # - Heatmap summaries are based on a separate hysteresis-style
 #   binary state labeling rule:
 #       state = 0 if m <= low
@@ -45,7 +45,7 @@ set.seed(123)
 RNGkind("L'Ecuyer-CMRG")
 plan(multisession, workers = max(1, parallel::detectCores() - 2))
 
-dir.create("res_clean", showWarnings = FALSE, recursive = TRUE)
+# dir.create("res/heatmaps", showWarnings = FALSE, recursive = TRUE)
 
 # ------------------------------------------------------------
 # 1) Grids
@@ -72,7 +72,7 @@ m0_init   <- 0.05
 # ------------------------------------------------------------
 # 3) Baseline no-shock parameters
 # ------------------------------------------------------------
-final_params  <- readRDS("res/final_params.rds")
+final_params <- readRDS("res/tuned/final_params.rds")
 
 par_slow_base <- final_params$best_ps_B0
 par_slow_base$shock_mode <- "none"
@@ -182,8 +182,7 @@ heat_zoom <- purrr::map_dfr(
   .progress = TRUE
 )
 
-# saveRDS(heat_zoom, "res_clean/heat_zoom_noshock_hyst2.rds")
-
+# saveRDS(heat_zoom, "res/heatmaps/heat_zoom_noshock_hyst2.rds")
 # ------------------------------------------------------------
 # 7) Sanity checks
 # ------------------------------------------------------------
