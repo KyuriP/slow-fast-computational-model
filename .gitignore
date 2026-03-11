@@ -3,5 +3,11 @@
 .RData
 .Ruserdata
 .DS_Store
-.DS_Store
-.DS_Store
+
+cache/
+quarto-docs/*_files/
+quarto-docs/*_cache/
+quarto-docs/**/figure-html/
+quarto-docs/**/libs/
+
+*.html
