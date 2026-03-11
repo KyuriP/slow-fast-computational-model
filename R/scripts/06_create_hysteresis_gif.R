@@ -13,7 +13,7 @@ suppressPackageStartupMessages({
 # ------------------------------------------------------------
 # 1) Load trajectory
 # ------------------------------------------------------------
-sim_B2 <- readRDS("res/sim_B2.rds")
+sim_B2 <- readRDS("res/hysteresis/sim_B2.rds")
 
 # ------------------------------------------------------------
 # 2) Prepare animation data

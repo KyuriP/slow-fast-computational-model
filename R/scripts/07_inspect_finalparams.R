@@ -4,7 +4,7 @@
 # Purpose
 # -------
 # Re-run and inspect the best B0 and B+S settings stored in
-# res/final_params.rds.
+# res/tuned/final_params.rds.
 # ============================================================
 
 suppressPackageStartupMessages({
@@ -18,16 +18,16 @@ suppressPackageStartupMessages({
   library(patchwork)
 })
 
-source("R/utils_fastlayer.R")
-source("R/utils_slowfast.R")
-source("R/utils_plotting.R")
-source("R/utils_diagnostics.R")
+source("R/utils/utils_fastlayer.R")
+source("R/utils/utils_slowfast.R")
+source("R/utils/utils_plotting.R")
+source("R/utils/utils_diagnostics.R")
 
 set.seed(123)
 RNGkind("L'Ecuyer-CMRG")
 plan(multisession, workers = max(1, parallel::detectCores() - 2))
 
-final_params <- readRDS("res/final_params.rds")
+final_params <- readRDS("res/tuned/final_params.rds")
 
 par_fast    <- final_params$par_fast
 best_groups <- final_params$best_groups
