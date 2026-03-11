@@ -90,3 +90,10 @@ slow-fast-linking/
 * `07_inspect_finalparams.R`
   Quick inspection / validation helper for tuned parameters.
 
+
+## License
+
+This project is licensed under the GNU General Public License v3.0.
+
+You are free to use, modify, and redistribute the code, provided that
+derivative works are also distributed under the same license.
