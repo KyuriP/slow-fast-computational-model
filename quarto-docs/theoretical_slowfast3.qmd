@@ -1,0 +1,2110 @@
+---
+title: "Slow–Fast Coupling: Curie–Weiss Symptoms Under Context Dynamics"
+description: |
+  We study a slow–fast hybrid system in which a fast, Ising-like (Curie–Weiss) symptom layer is coupled to a slow contextual process with feedback and noise. Simulations illustrate how slow contextual differences can drive tipping or switching-like patterns in symptoms without changing the symptom-layer coupling.
+author: 
+  - name: Kyuri Park
+    email: k.park@uva.nl
+    affiliations: 
+      - name: Computational Science Lab ![](img/csl.png){width=30%}
+date: today 
+title-block-banner: true
+format:
+  html:
+    code-fold: true
+    code-summary: "Show the code"
+    code-link: true
+    embed-resources: true
+toc: true
+toc-depth: 3
+theme: flatly
+highlight-style: github
+echo: true
+warning: false
+message: false
+---
+
+```{r}
+#| label: setup
+#| include: true
+
+## Core libraries
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(tibble)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+
+## Parallelisation
+library(future)
+library(furrr)
+
+## Layout / multi-panels
+library(patchwork)
+library(gganimate)
+
+#setup-utils
+source("R/utils_fastlayer.R")
+source("R/utils_slowfast.R")
+source("R/utils_plotting.R")     # used by run_scenario_diagnostics()
+source("R/utils_diagnostics.R")
+source("R/utils_gridsearch.R")
+
+theme_set(theme_minimal(base_size = 13))
+
+## Logistic helper
+inv_logit <- function(x) 1/(1 + exp(-x))
+
+## Parallel backend (safe default)
+plan(multisession, workers = max(1, parallel::detectCores() - 1))
+```
+
+
+
+# 1. Motivation
+
+Mental health symptoms fluctuate on fast time scales (hours–days), while socio-economic pressures (e.g., financial precarity, discrimination, workload) change more slowly (months–years). Standard symptom-network models often:
+
+* treat symptoms as a *closed* system, and
+* interpret group differences in symptom dynamics as *internal* differences in network structure.
+
+Here we explicitly couple:
+
+* a **fast 0/1 Curie–Weiss symptom layer** (binary symptoms with mean-field interaction),
+* a **slow precarity variable** $P_t$ that drifts gradually, and
+* **feedback** from symptoms back into precarity.
+
+
+![](img/slowfast.png){width=70%}
+
+
+We show how **group differences in symptom trajectories** can arise purely from:
+
+* different **precarity baselines**, and
+* different **feedback strengths**,
+
+with ***identical*** fast-layer parameters.
+
+
+
+---
+
+# 2. Fast layer: 0/1 Curie–Weiss symptom dynamics
+
+We use spins
+
+$$
+s_i \in {0,1},
+\qquad
+m = \frac{1}{N}\sum_i s_i \in [0,1].
+$$
+Here, $m$ is the fraction of active symptoms (a fast, summary “symptom load”).
+
+### Mean-field input (“field”)
+
+The mean-field “field” is
+
+$$
+H = J(m - \tfrac{1}{2}) + h_0 + \gamma_P P.
+$$
+Each symptom feels the same global input, $H$.
+
+- J: within-layer coupling (symptom reinforcement). If many symptoms are active ($m>0.5$), the coupling term pushes activation higher; if few are active, it pushes lower.
+
+- $h_0$: baseline bias (overall tendency toward on/off).
+
+- $\gamma_P$: context modulation—external context $P$ shifts the entire layer toward more or fewer active symptoms.
+
+
+### Stochastic activation rule
+
+We update spins with a logistic rule:
+
+$$
+\Pr(s_i=1 \mid m, P)=\sigma(\beta H), \qquad
+    \sigma(x)=\frac{1}{1+e^{-x}}
+$$
+
+- $\beta$: *sensitivity* (how sharply symptoms respond to the input $H$).
+Large $\beta$ makes the layer more “all-or-none”; small $\beta$ makes it smoother.
+
+::: {.callout-tip collapse=true title="Potential QnA"}
+***Q. What is Curie–Weiss?***  
+
+Curie–Weiss is the mean-field Ising model: every node “interacts with everyone else equally,” so the whole system can be summarized by the average activity $m$ rather than a full network.
+Curie–Weiss is the simplest possible interacting-symptom model: instead of a detailed network, every symptom feels the same average influence from all the others.
+
+***Q. What does J mean here?***  
+
+“$J$ is the strength of mutual reinforcement: how much the probability a symptom is ‘on’ increases when the overall symptom load $m$ is high.”
+
+***Q. Why not a 10-node symptom network?***  
+
+“We’re not trying to reproduce a particular 10-item network. Curie–Weiss is a mean-field stand-in for a generic reinforcing symptom layer. Using a larger $N$ just reduces finite-size noise so the regime structure (monostable vs bistable) is visually clean.”
+
+:::
+
+
+
+### Key regime condition: bistability
+
+When the effective reinforcement $\beta J$ is strong enough, the mean-field fixed point can become **bistable**:
+  
+* one stable state with **low** symptom activation $(m\approx 0)$,
+* one stable state with **high** activation $(m\approx 1)$.
+
+For the 0/1 Curie–Weiss model, bistability occurs when:
+  
+  $$
+    \beta J > 4
+  $$
+
+**Interpretation:** with strong coupling, the fast layer can support two persistent symptom “modes” under the same context $P$. Which mode the system occupies can depend on history and (in finite systems) noise—this is the structural basis for threshold effects, hysteresis, and regime shifts once we couple to the slow context dynamics.
+
+::: {.callout-tip collapse=true show=true title="Why $\beta J > 4$ "}
+![](img/JB>4.png){width=70% fig-align="center"}
+
+#### Bistability criterion in 0/1 Curie–Weiss
+  
+$$
+    m = \sigma\left(\beta\left[J(m-\tfrac12)+h_0+\gamma_P P\right]\right)
+$$
+
+* Fixed points are **intersections** of:
+  
+  * $y=m$ (straight line, slope $1$)
+  * $y=\sigma(\beta H(m))$ (sigmoid in $m$)
+
+
+* Multiple fixed points require the sigmoid to be **steeper than the line** near its midpoint.
+
+**Slope check:**
+  $$
+    \frac{d}{dm}\sigma(\beta H)=\beta J\sigma(\beta H)\big(1-\sigma(\beta H)\big)
+  $$
+
+* The logistic term is maximal at $\sigma=1/2$:  
+  $\max[\sigma(1-\sigma)]=1/4$
+
+So the **maximum possible slope** is:
+  $$
+    \max \frac{d}{dm}\sigma(\beta H) = \frac{\beta J}{4}
+  $$
+
+**Bistability condition:**
+  $$
+    \frac{\beta J}{4} > 1 \Rightarrow \beta J > 4
+  $$
+
+**Interpretation:** when $\beta J>4$, the fast layer supports **two stable modes** (low vs high $m$) for the *same* context $P$. Which mode you observe depends on **history** (and for finite $N$, occasional noise-driven switching).
+
+:::
+
+
+
+::: {.callout-note collapse=true title="Derivative of update map $F(m;P)$"}
+
+Define the fixed-point map
+$$
+F(m;P)=\sigma\left(\beta\left[J(m-\tfrac12)+h_0+\gamma_P P\right]\right).
+$$
+
+#### 1) Name the inside (“chain rule setup”)
+
+Let
+$$
+u(m)=\beta\left[J(m-\tfrac12)+h_0+\gamma_P P\right].
+$$
+
+Then
+$$
+F(m;P)=\sigma(u(m)).
+$$
+
+#### 2) Derivative of the logistic
+
+For $\sigma(x)=\frac{1}{1+e^{-x}}$,
+
+$$
+\sigma'(x)=\sigma(x)\big(1-\sigma(x)\big).
+$$
+
+So by chain rule,
+$$
+\frac{dF}{dm}=\sigma'(u(m))\cdot u'(m).
+$$
+
+#### 3) Derivative of the inside $u(m)$
+
+$$
+u'(m)=\beta \cdot \frac{d}{dm}\left[J(m-\tfrac12)+h_0+\gamma_P P\right]
+=\beta \cdot J,
+$$
+because $h_0$ and $P$ are constants with respect to $m$.
+
+#### 4) Combine
+
+$$
+\frac{dF}{dm}
+=\sigma'(u(m))\cdot (\beta J)
+=(\beta J)\sigma(u(m))\big(1-\sigma(u(m))\big).
+$$
+
+#### 5) Put it back in original symbols
+
+Since $\sigma(u(m)) = F(m;P)$, you can write
+
+$$
+\boxed{\frac{d}{dm}\sigma\left(\beta\left[J(m-\tfrac12)+h_0+\gamma_P P\right]\right)
+= \beta J p(1-p);}
+$$
+
+where
+$$
+p = \sigma!\left(\beta\left[J(m-\tfrac12)+h_0+\gamma_P P\right]\right).
+$$
+
+:::
+
+
+```{r}
+#| label: fast-layer
+#| include: true
+
+# ------------------------------------------------------------
+# Fast layer (0/1 Curie–Weiss / mean-field Ising-like symptoms)
+#
+# Goal:
+#   Given current context P and a vector of binary symptoms s,
+#   perform several "fast" update sweeps to relax toward the
+#   mean-field equilibrium implied by P.
+#
+# Model ingredients:
+#   s_i ∈ {0,1}            binary symptom state (off/on)
+#   m   = mean(s) ∈ [0,1]  fraction of active symptoms
+#
+# Mean-field "field" (global input felt by every symptom):
+#   H = J*(m - 1/2) + h0 + gammaP*P
+#
+# Stochastic update rule (same for all i in mean-field):
+#   Pr(s_i = 1 | m,P) = sigmoid(beta * H)
+#
+# Implementation notes:
+#   - We do asynchronous updates: pick one random site at a time.
+#   - One sweep = n single-site updates (n = number of symptoms).
+#   - 'sweeps' controls how close we get to the fast-layer
+#     quasi-equilibrium before the slow layer takes another step.
+# ------------------------------------------------------------
+
+ising_fast_step01 <- function(
+  P,                 # scalar context value at this slow-time step
+  s,                 # length-n vector of 0/1 symptoms
+  beta   = 1.0,      # gain / inverse temperature (steepness of sigmoid)
+  J      = 1.0,      # within-layer coupling (symptom reinforcement)
+  h0     = 0.0,      # baseline bias (shifts activation up/down)
+  gammaP = 0.5,      # context-to-symptom coupling (how P shifts the field)
+  sweeps = 30        # number of fast relaxation sweeps per slow step
+){
+  n <- length(s)
+
+  # Repeat several sweeps to approximate "fast equilibration"
+  for (sw in seq_len(sweeps)) {
+
+    # Current mean symptom activation (order parameter)
+    m <- mean(s)
+
+    # Mean-field input: coupling term centered at m=0.5 + baseline + context
+    H <- J * (m - 0.5) + h0 + gammaP * P
+
+    # Shared activation probability for any symptom given (m, P)
+    p <- inv_logit(beta * H)
+
+    # Asynchronous (Glauber-like) updates:
+    # perform n single-site updates per sweep; each time pick a random i
+    for (u in seq_len(n)) {
+      i <- sample.int(n, 1)     # choose a random symptom index
+      s[i] <- rbinom(1, 1, p)   # resample symptom i from Bernoulli(p)
+    }
+  }
+
+  # Return updated symptom vector after 'sweeps' sweeps
+  s
+}
+
+```
+
+---
+
+# 3. Slow layer: external context dynamics
+
+We represent external context as a single continuous variable $P_t$. It evolves ***slowly*** relative to symptoms and has three ingredients:
+  
+1. **Mean reversion** toward a baseline level $P_{\text{base}}$ (can differ across groups)
+2. **Feedback from symptoms** (via a slow symptom trace $m_{\text{slow}})$
+3. **Random fluctuations** (Gaussian noise)
+
+
+
+### Context update equation (Euler–Maruyama)
+
+We then update $P_t$ with:
+  
+$$
+P_{t+1} = P_t
+    +\Big[-\kappa(P_t-P_{\text{base}})+b(m_{\text{slow},t}-m_*)\Big]dt
+    +\sigma_P \sqrt{dt},\epsilon_t,
+    \qquad \epsilon_t\sim \mathcal{N}(0,1).
+$$
+
+
+Breakdown of terms:
+  
+#### 1) Mean reversion (OU drift)
+  
+$$
+    -\kappa(P_t-P_{\text{base}})
+$$
+
+* $\kappa>0$ pulls context back to baseline.
+* Larger $\kappa$ = faster reversion (context is “stiff,” resists deviation).
+* Smaller $\kappa$ = slower reversion (context drifts more freely).
+
+This is the standard Ornstein–Uhlenbeck (OU) mechanism: context is not a random walk; it has a preferred level.
+
+#### 2) Symptom → context feedback
+
+$$
+  b(m_{\text{slow},t}-m_*)
+$$
+
+* $b$ is feedback strength.
+* $m_*$ is the reference “setpoint” symptom level:
+  
+  * if $m_{\text{slow}} > m_*$, feedback pushes $P$ **up**
+  * if $m_{\text{slow}} < m_*$, feedback pushes $P$ **down**
+  
+Interpretation: sustained symptom burden can gradually worsen context (or, if below setpoint, allow recovery), depending on sign/magnitude of $b$. 
+
+::: {.callout-tip title="Why introduce $m_{\text{slow}}$"}
+
+
+The fast symptom mean $m_t$ can fluctuate quickly from moment to moment. If context responded instantly to $m_t$, the slow variable wouldn’t be “slow.” So we define a smoothed symptom signal that tracks sustained symptom burden rather than short-lived spikes:
+
+  
+$$
+    m_{\text{slow},t+1}=m_{\text{slow},t}+\lambda_m(m_t-m_{\text{slow},t})
+$$
+
+* This is an exponentially weighted moving average (*EWMA*).
+* $\lambda_m$ controls the time scale:
+  
+  * small $\lambda_m$ → strong smoothing / long memory (context reacts only to persistent changes)
+  * large $\lambda_m$ → tracks $m_t$ more quickly / short memory (context reacts more quickly).
+
+Interpretation: $m_{\text{slow}}$ is the symptom signal that external context “sees” (e.g., accumulated strain, sustained burden), not moment-to-moment noise.
+If symptoms spike for a day and then drop, we don’t want context to react strongly. But if symptoms stay elevated for weeks, then context should shift. $m_{\text{slow}}$ captures that sustained burden.
+
+:::
+
+#### 3) Stochastic perturbations
+
+$$
+  \sigma_P \sqrt{dt},\epsilon_t
+$$
+
+* $\sigma_P$ is the amplitude of random contextual shocks.
+* The $\sqrt{dt}$ scaling is standard for SDE discretization: it keeps noise behavior consistent when you change $dt$.
+
+
+
+::: {.callout-note icon=false title="Parameter intuition"}
+
+* ***$\kappa$***: how quickly context returns to baseline (stiffness)
+* ***$\sigma_P$***: how noisy/volatile context is
+* ***$b$***: how strongly sustained symptoms reshape context
+* ***$m_*$***: symptom setpoint where feedback changes sign
+* ***$\lambda_m$***: how slowly context responds to symptoms (smoothing)
+:::
+
+
+
+```{r}
+#| label: slowfast-constant
+#| include: true
+
+# ------------------------------------------------------------
+# Slow–fast simulator (constant baseline context)
+#
+# Summary:
+#   - Fast layer: 0/1 Curie–Weiss symptoms s_i updated many times per slow step
+#   - Slow layer: external context P_t follows OU-like drift + symptom feedback + noise
+#   - m_slow is an EWMA (smoothed symptom burden) that drives feedback
+#
+# Slow layer equations (Euler–Maruyama):
+#   m_slow[t+1] = m_slow[t] + lambda_m * (m_fast[t] - m_slow[t])
+#   P[t+1]      = P[t] + dt * ( -kappa*(P[t] - P_base) + b*(m_slow[t] - m_star) )
+#                      + sigmaP * sqrt(dt) * Normal(0,1)
+#
+# Parameter intuition:
+#   dt       : slow time step (smaller dt = finer discretization)
+#   kappa    : mean-reversion speed toward baseline P_base
+#   P_base   : baseline external context (can differ across groups)
+#   b        : symptom -> context feedback strength (b=0 disables feedback)
+#   m_star   : symptom setpoint; feedback is positive when m_slow > m_star
+#   sigmaP   : amplitude of random contextual shocks
+#   lambda_m : EWMA rate (small = strong smoothing / long memory)
+#
+# Returns: tibble with time index, P(t), fast mean m(t), and smoothed mean m_slow(t)
+# ------------------------------------------------------------
+
+simulate_slowfast_cw01 <- function(
+  T_steps = 4000,      # number of slow steps to simulate
+  dt      = 0.02,      # slow time step size
+  P_base  = 0,         # constant baseline context level
+  P0      = 0,         # initial context value
+  m0      = 0.1,       # initial mean symptom activation
+  kappa   = 0.2,       # mean reversion rate toward P_base
+  b       = 0.3,       # symptom->context feedback strength (0 = none)
+  m_star  = 0.3,       # feedback setpoint (reference symptom level)
+  sigmaP  = 0.03,      # context noise amplitude
+  lambda_m = 0.003,    # EWMA rate for smoothed symptom burden
+  # ---- fast layer params (Curie–Weiss) ----
+  n_nodes = 100,       # number of binary symptoms (spins)
+  sweeps  = 30,        # fast sweeps per slow step (time-scale separation)
+  beta    = 1.0,       # gain / inverse temperature
+  J       = 1.0,       # within-layer coupling
+  h0      = 0.0,       # baseline field
+  gammaP  = 0.5,       # context -> symptom coupling
+  seed    = 1          # RNG seed for reproducibility
+){
+  set.seed(seed)
+
+  # storage for trajectories
+  P      <- numeric(T_steps)  # slow context
+  m_fast <- numeric(T_steps)  # fast mean symptom activation
+  m_slow <- numeric(T_steps)  # EWMA-smoothed symptom activation (drives feedback)
+
+  # initial conditions
+  P[1]      <- P0
+  m_fast[1] <- m0
+  m_slow[1] <- m0
+
+  # initialize symptom vector with mean m0
+  s <- rbinom(n_nodes, 1, m0)
+
+  # main slow-time loop
+  for (t in 1:(T_steps - 1)) {
+
+    # --- (1) FAST LAYER: relax symptoms under current context P[t] ---
+    # multiple sweeps approximate "fast equilibration" before P moves again
+    s <- ising_fast_step01(
+      P = P[t], s = s,
+      beta = beta, J = J, h0 = h0, gammaP = gammaP,
+      sweeps = sweeps
+    )
+    m_fast[t] <- mean(s)
+
+    # --- (2) SMOOTHED SYMPTOM SIGNAL: EWMA / slow symptom burden ---
+    # m_slow tracks sustained changes and filters moment-to-moment fluctuations
+    m_slow[t+1] <- m_slow[t] + lambda_m * (m_fast[t] - m_slow[t])
+
+    # --- (3) SLOW LAYER: context update (OU drift + feedback + noise) ---
+    # drift component: mean reversion + symptom-driven feedback
+    drift <- -kappa * (P[t] - P_base) + b * (m_slow[t] - m_star)
+
+    # Euler–Maruyama step: noise scales with sqrt(dt)
+    P[t+1] <- P[t] + dt * drift + rnorm(1, mean = 0, sd = sigmaP * sqrt(dt))
+  }
+
+  # last m_fast value (for convenience)
+  m_fast[T_steps] <- m_fast[T_steps - 1]
+
+  tibble(t = 1:T_steps, P = P, m = m_fast, m_slow = m_slow)
+}
+
+```
+
+
+```{r}
+#| label: slowfast-timevarying
+#| include: true
+
+# ------------------------------------------------------------
+# Slow–fast simulator (time-varying baseline context)
+#
+# Used for hysteresis experiments:
+#   External baseline P_base(t) is slowly ramped up and down,
+#   while feedback is typically turned off (b=0) to isolate
+#   bistability in the fast layer.
+#
+# Differences from simulate_slowfast_cw01():
+#   - baseline is a function P_base_fun(t) instead of a constant
+#   - output also includes the baseline time series P_base(t)
+# ------------------------------------------------------------
+
+simulate_slowfast_cw01_timevaryingPbase <- function(
+  T_steps = 6000,
+  dt      = 0.02,
+  P_base_fun = function(t) 0,  # function returning baseline P_base at time t
+  P0      = 0,
+  m0      = 0.1,
+  kappa   = 0.2,
+  b       = 0.0,               # often 0 in hysteresis: no symptom->context feedback
+  m_star  = 0.3,
+  sigmaP  = 0.03,
+  lambda_m = 0.003,
+  # ---- fast layer params ----
+  n_nodes = 100,
+  sweeps  = 30,
+  beta    = 2.0,
+  J       = 3.0,
+  h0      = 0.0,
+  gammaP  = 1.0,
+  seed    = 1
+){
+  set.seed(seed)
+
+  # storage
+  P      <- numeric(T_steps)   # context trajectory
+  m_fast <- numeric(T_steps)   # fast mean
+  m_slow <- numeric(T_steps)   # EWMA mean
+  P_base <- numeric(T_steps)   # baseline trajectory (for plotting)
+
+  # initial conditions
+  P[1]      <- P0
+  m_fast[1] <- m0
+  m_slow[1] <- m0
+
+  # initialize symptoms
+  s <- rbinom(n_nodes, 1, m0)
+
+  for (t in 1:(T_steps - 1)) {
+
+    # baseline at this time
+    P_base[t] <- P_base_fun(t)
+
+    # --- (1) FAST LAYER update under current context ---
+    s <- ising_fast_step01(
+      P = P[t], s = s,
+      beta = beta, J = J, h0 = h0, gammaP = gammaP,
+      sweeps = sweeps
+    )
+    m_fast[t] <- mean(s)
+
+    # --- (2) EWMA symptom burden ---
+    m_slow[t+1] <- m_slow[t] + lambda_m * (m_fast[t] - m_slow[t])
+
+    # --- (3) SLOW LAYER: OU drift toward time-varying baseline + feedback + noise ---
+    drift <- -kappa * (P[t] - P_base[t]) + b * (m_slow[t] - m_star)
+    P[t+1] <- P[t] + dt * drift + rnorm(1, mean = 0, sd = sigmaP * sqrt(dt))
+  }
+
+  # store final baseline and fill last m_fast
+  P_base[T_steps] <- P_base_fun(T_steps)
+  m_fast[T_steps] <- m_fast[T_steps - 1]
+
+  tibble(t = 1:T_steps, P = P, P_base = P_base, m = m_fast, m_slow = m_slow)
+}
+
+# ------------------------------------------------------------
+# Helper: up-then-down ramp for baseline P_base(t)
+#
+# Returns a function of t:
+#   - increases linearly from Pmin to Pmax over the first frac_up fraction
+#   - then decreases linearly back to Pmin over the remainder
+# ------------------------------------------------------------
+
+make_ramp_Pbase <- function(T_steps, Pmin, Pmax, frac_up = 0.5){
+  Tup <- floor(T_steps * frac_up)
+
+  function(t){
+    if (t <= Tup){
+      # ramp up
+      Pmin + (Pmax - Pmin) * (t - 1) / (Tup - 1)
+    } else {
+      # ramp down
+      td <- t - Tup
+      Tdown <- T_steps - Tup
+      Pmax - (Pmax - Pmin) * (td - 1) / (Tdown - 1)
+    }
+  }
+}
+
+```
+
+---
+
+# 4. Fast-layer equilibrium structure and fold thresholds
+  
+For a fixed context value $P$, the mean-field Curie–Weiss layer relaxes toward equilibrium levels $m^*(P)$ that satisfy
+
+$$
+  m = \sigma\left(\beta\left[J(m-\tfrac12)+h_0+\gamma_P P\right]\right).
+$$
+
+We compute these equilibria across a range of $P$ and plot $m^*(P)$ as a **bifurcation diagram**:
+  
+* **Solid curves:** stable equilibria (attractors)
+* **Dashed curve:** unstable equilibrium (separator)
+* **Grey band:** range of $P$ where **two stable equilibria coexist** (bistability)
+
+### Fold thresholds
+
+The **folds** $P_{\text{low fold}}$ and $P_{\text{high fold}}$ are the two edges of the bistable region:
+  
+* crossing a fold means one stable branch disappears,
+* the system must **jump** to the remaining stable branch.
+
+**Why this matters:** when context $P_t$ changes slowly, folds create **threshold-like jumps** and **hysteresis**.
+
+
+
+```{r}
+#| label: bifurcation
+#| include: true
+
+# ------------------------------------------------------------
+# Mean-field equilibria ("bifurcation curve") for 0/1 Curie–Weiss
+#
+# For each fixed context value P, the mean-field fast layer satisfies:
+#   m = F(m; P) = sigmoid( beta * [ J(m-1/2) + h0 + gammaP*P ] )
+#
+# Fixed points are roots of:
+#   f(m) = F(m;P) - m = 0
+#
+# Stability (discrete-time map m_{t+1}=F(m_t;P)):
+#   stable if |F'(m*)| < 1
+# Here F'(m) = beta*J*p(1-p) where p = F(m;P).
+# ------------------------------------------------------------
+
+cw01_fixed_points <- function(P, beta, J, h0, gammaP){
+
+  # --- (1) Fixed-point function: f(m) = F(m;P) - m ---
+  f <- function(m) {
+    inv_logit(beta * (J*(m - 0.5) + h0 + gammaP*P)) - m
+  }
+
+  # --- (2) Stability diagnostic: df(m) = F'(m) - 1 ---
+  # If df(m*) < 0  <=>  F'(m*) < 1, the fixed point is stable.
+  df <- function(m){
+    p <- inv_logit(beta * (J*(m - 0.5) + h0 + gammaP*P))  # p = F(m;P)
+    beta * J * p * (1 - p) - 1                           # F'(m) - 1
+  }
+
+  # --- (3) Locate all roots in [0,1] by bracketing + uniroot ---
+  # Coarse scan to find sign changes (root brackets)
+  grid <- seq(0, 1, length.out = 801)
+  vals <- f(grid)
+  idx  <- which(diff(sign(vals)) != 0)   # intervals where f changes sign
+
+  # Refine each bracket to a root using uniroot()
+  roots <- c()
+  for (k in idx) {
+    r <- try(uniroot(f, c(grid[k], grid[k+1]))$root, silent = TRUE)
+    if (!inherits(r, "try-error")) roots <- c(roots, r)
+  }
+
+  # Clean: unique + sorted roots (rounding avoids tiny numeric duplicates)
+  roots <- sort(unique(round(roots, 6)))
+  if (!length(roots)) return(NULL)
+
+  # Return table: all equilibria m*(P) and their stability label
+  tibble(P = P, m = roots, stable = df(roots) < 0)
+}
+
+# Compute equilibria across a grid of context values P_grid
+cw01_bifurcation_curve <- function(P_grid, beta, J, h0, gammaP){
+  map_dfr(P_grid, ~ cw01_fixed_points(.x, beta, J, h0, gammaP))
+}
+
+```
+
+
+```{r}
+#| label: bifurcation-BC
+#| include: true
+
+# ------------------------------------------------------------
+# Example: bistable-capable fast layer used in Scenarios B and C
+#
+# Choose beta and J such that beta*J > 4 (bistability possible for some P):
+#   beta = 2, J = 3  -> beta*J = 6 > 4
+# Then compute the bifurcation diagram m*(P) over a range of P.
+# ------------------------------------------------------------
+
+beta_BC   <- 2.0
+J_BC      <- 3.0    # beta*J = 6 (> 4) => bistable-capable regime
+h0_BC     <- 0.0
+gammaP_BC <- 1.0
+
+# Grid of context values over which we compute equilibria
+P_grid_BC <- seq(-2, 2, length.out = 400)
+
+# Full table of equilibria: columns (P, m, stable)
+bf_BC <- cw01_bifurcation_curve(P_grid_BC, beta_BC, J_BC, h0_BC, gammaP_BC)
+
+# ------------------------------------------------------------
+# Summarize, for each P:
+#   - how many stable equilibria exist (n_stable)
+#   - the lowest/highest stable equilibria (m_low, m_high)
+# If n_stable == 2, the system is bistable at that P.
+# ------------------------------------------------------------
+
+stab_by_P <- bf_BC %>%
+  filter(stable) %>%
+  group_by(P) %>%
+  summarise(
+    n_stable = n(),
+    m_low  = min(m),
+    m_high = max(m),
+    .groups = "drop"
+  )
+
+# Extract the P-range where there are TWO stable equilibria (bistable window)
+bistable_window <- stab_by_P %>% filter(n_stable == 2)
+
+# Fold thresholds = the edges of the bistable window
+# (where one stable branch disappears)
+if (nrow(bistable_window) > 0) {
+  P_low_fold  <- min(bistable_window$P)
+  P_high_fold <- max(bistable_window$P)
+} else {
+  P_low_fold  <- NA_real_
+  P_high_fold <- NA_real_
+}
+
+cat("Bistable P-window: [", round(P_low_fold, 3), ", ", round(P_high_fold, 3), "]\n", sep = "")
+
+# ------------------------------------------------------------
+# Plot:
+#   - Grey ribbon: region between stable low/high branches when bistable
+#   - Solid curves: stable equilibria
+#   - Dashed curve: unstable equilibria (middle branch when bistable)
+# ------------------------------------------------------------
+
+ggplot() +
+  { if (nrow(bistable_window) > 0)
+      geom_ribbon(
+        data = bistable_window,
+        aes(x = P, ymin = m_low, ymax = m_high),
+        fill = "grey85", alpha = 0.6
+      )
+  } +
+  geom_line(
+    data = bf_BC %>% filter(!stable),
+    aes(P, m),
+    linetype = "dashed", colour = "grey60"
+  ) +
+  geom_line(
+    data = bf_BC %>% filter(stable, m < 0.5),
+    aes(P, m),
+    linewidth = 1.0,
+    color = "skyblue3"
+  ) +
+  geom_line(
+    data = bf_BC %>% filter(stable, m >= 0.5),
+    aes(P, m),
+    linewidth = 1.0,
+    color = "red3"
+    
+  ) +
+  labs(
+    title    = "Bifurcation diagram of fast Curie–Weiss layer",
+    subtitle = "Grey band: bistable region (two stable equilibria)",
+    x = expression("External context " * P),
+    y = expression("Equilibrium mean symptom activation " * m^"*"*(P))
+  )
+```
+
+
+---
+
+# 5. Scenario map
+
+## What is held constant vs what changes
+
+**Within any single scenario (A / B / C1 / C2):**
+
+- **Fast layer** parameters $(\beta, J, h_0, \gamma_P)$ are fixed.
+- **Slow layer** parameters $(\kappa, b, \sigma_P, m_*)$ are fixed.
+- **Groups** differ only in the baseline context level $P_{\text{base}}$.
+  - In **A** and **B**, this baseline difference produces differences in $P_t$ directly (no amplification mechanism beyond mean reversion + noise).
+  - In **C**, the same baseline difference can be **amplified** because symptoms feed back into context $(b>0)$.
+
+**Across scenarios: what we intentionally manipulate**
+
+- We switch the fast-layer regime by moving between **$\beta J<4$** (monostable) and **$\beta J>4$** (bistable-capable).
+- We toggle **feedback** by setting $b=0$ (off) versus $b>0$ (on).
+- We adjust $\kappa$ (mean reversion) and $\sigma_P$ (noise) to tune how tightly $P_t$ tracks baseline and how easily trajectories cross between basins.
+
+
+::: {.callout-tip title="Each scenario (what it isolates)"}
+
+##### **A** ($\beta J<4$): smooth context → smooth symptoms  
+**Setup:** Fast layer has a *single* stable equilibrium $m^*(P)$ for all $P$. Two groups differ only in constant $P_{\text{base}}$.  
+**Demonstration:** shifting baseline context shifts $m$ **smoothly** (no thresholds, no hysteresis).
+
+---
+
+##### **B** ($\beta J>4$, $b=0$): hysteresis under a slow context ramp  
+**Setup:** Fast layer is bistable-capable. Baseline is ramped $P_{\text{base}}(t)$ up then down; feedback off.  
+**Demonstration:** **path dependence** — on the way up the trajectory stays on the low branch until the *upper threshold*; on the way down it stays high until the *lower threshold*, producing a hysteresis loop in $m$ vs $P$.
+
+---
+
+##### **C** ($\beta J>4$, $b>0$): feedback makes context endogenous  
+**Setup:** Same bistable-capable fast layer, but symptoms push context via feedback:
+$$
+P_{t+1}=P_t + dt\{-\kappa(P_t-P_{\text{base}}) + b(m_{\text{slow},t}-m_*)\} + \sigma_P\sqrt{dt}\,\epsilon_t.
+$$
+**Demonstration:** depending on $(b,\kappa,\sigma_P,m_*)$, trajectories either:  
+
+- **C1:** get captured in the high basin (tipping-like persistence), or  
+- **C2:** keep switching between basins (metastable switching).
+
+
+:::
+
+
+
+
+```{r,  fig.cap="Scenario parameters."}
+
+#| label: scenario-params-table-compact
+#| echo: false
+#| eval: true
+
+
+param_tbl_compact <- tribble(
+  ~Scenario, ~Regime, ~`βJ`, ~`γ_P`, ~`κ`, ~`b`, ~`σ_P`, ~`m_*`, ~`P_base`, ~`Key point`,
+  "A",  "monostable", 2.5, 0.4, 0.30, 0.20, 0.10, 0.10, "[-0.80, 0.80]",     "Smooth mean shift",
+  "B",  "bistable-capable",   6.0, 1.0, 0.15, 0.00, 0.02, 0.30, "ramp↑then↓",      "Hysteresis loop",
+  "C1", "bistable-capable",   6.0, 1.0, 0.10, 0.28, 0.06, 0.12, "[-1.006, 0.000]",    "Capture (long dwell)",
+  "C2", "bistable-capable",   6.0, 1.0, 0.38, 0.16, 0.20, 0.25, "[-1.006, 0.000]",    "Switching (many flips)"
+)
+
+kable(
+  param_tbl_compact,
+  digits = 3,
+  align  = c("l","c","r","r","r","r","r","r","c","l"),
+  # caption = "Scenario parameters."
+) |>
+  kable_styling(
+    font_size = 13,
+    full_width = TRUE,
+    position = "center",
+    bootstrap_options = c("responsive", "hover", "condensed", "striped")
+  ) |>
+  row_spec(0, bold = TRUE) |>
+  column_spec(1, bold = TRUE, width = "4.5em") |>
+  column_spec(2, width = "4em") |>
+  column_spec(9, width = "7.5em") |>
+  column_spec(10, width = "13em") |>
+  footnote(
+    general = "Shared unless noted: n_nodes=100;  λ_m=0.001;  sweeps=40;  h0=0.",
+    general_title = "Note. ",
+    footnote_as_chunk = TRUE,
+    threeparttable = TRUE,
+    fixed_small_size= TRUE
+  ) 
+
+
+```
+
+
+::: {.callout-note collapse=true title="Why parameter differs"}
+  
+##### 1) $\beta J$: 2.5 in A vs 6.0 in B/C
+  
+* **This is the only parameter that changes the *qualitative* phase portrait of the fast layer.**
+* **A** is explicitly the *control case*: $\beta J<4\Rightarrow$ one stable equilibrium $m^*(P)$ for each $P$.
+* **B/C** need bistability (two stable branches + folds): $\beta J>4$.
+
+So $\beta J$ differs because A vs B/C are different fast-layer regimes by definition, not for convenience.
+
+---
+  
+##### 2) $\gamma_P$: 0.4 in A vs 1.0 in B/C
+  
+* $\gamma_P$ sets the **gain** from context $P$ into the fast-layer field $H$.
+* In **B** (hysteresis), the whole point is to *sweep through the bistable window* as $P_{\text{base}}(t)$ ramps. Using $\gamma_P=1$ makes the ramp traverse the bifurcation region cleanly without needing extreme $P$ values.
+* In **A**, we don’t need to “hit folds” (there aren’t any). A smaller $\gamma_P$ keeps the mapping smooth and avoids saturating (m) near 0 or 1, so you get an interpretable “smooth mean shift”.
+
+So $\gamma_P$ is chosen to keep $P$ in a comparable, readable range while achieving the intended effect.
+
+---
+  
+##### 3) $b$: 0 in B, positive in A/C
+  
+* **B** is defined as “no feedback”: $b=0$. That’s essential to show **pure exogenous hysteresis**.
+* **C** is defined as “feedback on”: $b>0$. That’s the whole mechanism (context becomes endogenous).
+* **A** can have $b>0$ without creating tipping, because the fast layer has no competing basins; feedback only shifts the single equilibrium smoothly. Keeping (b>0) in A is defensible because it shows: *even with feedback, monostability prevents regime shifts.*
+  
+
+---
+  
+##### 4) $\kappa$: 0.30 (A), 0.15 (B), 0.10/0.38 (C1/C2)
+  
+Think of $\kappa$ as the **stiffness** of context around its baseline.
+
+* **A (0.30):** moderate stiffness so $P_t$ stays near its baseline levels, producing stable separation between groups.
+* **B (0.15):** must be **low enough** that $P_t$ can actually track the ramp $P_{\text{base}}(t)$ (otherwise the ramp is “canceled” by strong reversion).
+* **C1 vs C2:** $\kappa$ is part of what controls whether feedback produces **capture** or **wandering**:
+  
+  * **C1 (0.10):** weaker pull-back makes it easier for feedback to shift $P$ and hold the system in a high regime (capture).
+  * **C2 (0.38):** stronger pull-back resists drift, so even with feedback the system doesn’t lock—switching becomes easier when combined with high noise.
+
+So $\kappa$ is not “tuned”; it is the knob for *how responsive context is* relative to baseline vs feedback.
+
+---
+  
+##### 5) $\sigma_P$: 0.10 (A), 0.02 (B), 0.06 (C1), 0.20 (C2)
+  
+Noise is the knob for **how often you see stochastic transitions** (when transitions are possible).
+
+* **A:** noise just adds realistic variability around the single equilibrium. It doesn’t create regime switching because there is only one basin.
+* **B (0.02):** you intentionally want a **clean hysteresis loop** driven by the ramp, not noise-driven hopping—so keep (\sigma_P) low.
+* **C1 (0.06):** moderate noise, but not enough to prevent capture once feedback pushes into the high regime.
+* **C2 (0.20):** high noise is essential for **metastable switching**; otherwise the system would just settle.
+
+So $\sigma_P$ is set to either suppress switching (B), allow capture (C1), or promote switching (C2).
+
+---
+  
+##### 6) $m_*$: 0.10 (A), 0.30 (B), 0.12/0.25 (C1/C2)
+  
+$m_*$ is the **reference symptom level** for the feedback term $b(m_{\text{slow}}-m_*)$. It determines the *direction* and *baseline strength* of feedback.
+
+* In **B**, $b=0$ so $m_*$ is irrelevant (kept at a conventional value).
+* In **C**, $m_*$ matters because it controls how easily feedback “turns on”:
+  
+  * **C1:** lower $m_*$ means feedback becomes positive already at relatively modest symptom levels, helping capture.
+  * **C2:** higher $m_*$ reduces net upward drift except when symptoms are high, contributing to weaker net feedback and more switching.
+
+In **A**, $m_*$ just sets where feedback pushes $P$ around its baseline; with one basin it remains smooth.
+
+:::
+
+
+## ***Scenario A***: monostable fast layer → smooth group differences
+
+**Goal:** establish the baseline case where the fast symptom layer has a single stable equilibrium for every context level $P$.
+So if two groups differ only in their baseline context $P_{\text{base}}$, their symptom means differ smoothly —no abrupt transitions, no path dependence.
+
+**Mechanism:** when $\beta J < 4$, the mean-field update map has only one stable fixed point $m^*(P)$. Even if context has feedback $b>0$, the fast layer cannot “choose between basins”, because there are no competing basins; so shifting $P$ shifts $m^*(P)$ continuously.
+
+```{r}
+#| label: scenario-A
+#| include: true
+
+# ---------------------------
+# Scenario A: monostable regime (βJ < 4)
+# ---------------------------
+
+par_fast_A <- list(
+  n_nodes = 100,
+  sweeps  = 40,     # fast relaxation per slow step (monostable => fewer needed)
+  beta    = 1.0,
+  J       = 2.5,    # βJ = 2.5 < 4  => monostable mean-field structure
+  h0      = 0,
+  gammaP  = 0.4
+)
+
+par_slow_A <- list(
+  dt       = 0.02,
+  kappa    = 0.30,  # mean reversion of context toward baseline
+  b        = 0.20,  # symptom-to-context feedback (kept on, but no bistable geometry)
+  m_star   = 0.10,  # reference symptom level for feedback term
+  sigmaP   = 0.10,  # context noise
+  lambda_m = 0.001  # EWMA rate for m_slow
+)
+
+labels_A  <- c("Lower baseline context", "Higher baseline context")
+P_bases_A <- c(-0.8, 0.8)
+
+# res_A <- run_scenario_diagnostics(
+#   scenario_name = "A (βJ<4, single equilibrium)",
+#   par_fast = par_fast_A,
+#   par_slow = par_slow_A,
+#   P_bases  = P_bases_A,
+#   labels   = labels_A,
+#   T_steps  = 6000,
+#   n_rep    = 20,
+#   seed_base = 1000,
+#   burn_in = 500
+# )
+
+
+# saveRDS(res_A, "res/res_A_v2.rds") # sweeps =40 and ho = 0
+
+res_A <- readRDS("res/res_A_v2.rds")
+
+```
+
+
+
+```{r}
+# ms_A_talk <- res_A$metrics_summary |>
+#   mutate(
+#     # Relabel groups if you want
+#     group = recode(group,
+#                    "Low precarity"  = "Lower baseline context",
+#                    "High precarity" = "Higher baseline context"),
+#     # Clean NaN/NA
+#     frac_high_branch = ifelse(is.nan(frac_high_branch), NA_real_, frac_high_branch),
+#     med_high_dwell   = ifelse(is.nan(med_high_dwell),   NA_real_, med_high_dwell)
+#   ) |>
+#   transmute(
+#     Group        = group,
+#     `Mean context (P)` = mean_P,
+#     `Mean symptoms (m)` = mean_m,
+#     `Pr(m>0.5)`  = frac_high_abs,
+#     `Switches`   = n_switch
+#   ) |>
+#   mutate(across(where(is.numeric), ~ round(.x, 3)))
+
+ms_A_talk <- res_A$metrics_summary |>
+  dplyr::transmute(
+    Group             = group,
+    `Mean context  E[P_t]`   = round(mean_P, 3),
+    `Mean symptoms  E[m_t]`  = round(mean_m, 3),
+    `Pr(m_t > 0.5)`          = round(frac_high_abs, 3),
+    `Switches (branch)`      = round(n_switch, 1)
+  )
+
+
+kable(ms_A_talk, align = "lrrrr",
+      caption = "Scenario A summary (monostable fast layer: no branch switching).") |>
+  kable_styling(full_width = TRUE,
+                bootstrap_options = c("striped","condensed")) |>
+  row_spec(0, bold = TRUE)
+```
+
+> In Scenario A the fast layer has only one stable equilibrium for each $P$, so branch-based metrics (low/high branch assignment) are not meaningful; observed variation is only finite-size and stochastic update noise around the single curve $m^*(P)$.
+
+
+```{r}
+#| fig-width: 10
+
+sim_A_rep <- res_A$sim_all |>
+  filter(rep == 1) |>
+  mutate(group = recode(group,
+                        "Low precarity"  = "Lower baseline context",
+                        "High precarity" = "Higher baseline context"))
+
+cols_ctx <- c(
+  "Higher baseline context" = "#FF5733",
+  "Lower baseline context"  = "#7ABD7D"
+)
+
+burn_in <- 500
+t_min   <- 0  # show last segment for readability
+
+
+pP <- ggplot2::ggplot(sim_A_rep |> dplyr::filter(t >= t_min),
+                      ggplot2::aes(t, P, colour = group)) +
+  ggplot2::geom_line(linewidth = 0.5, alpha = 0.9) +
+  ggplot2::scale_colour_manual(values = cols_ctx) +
+  ggplot2::labs(x = NULL, y = "Context load  P(t)", colour = NULL) +
+  ggplot2::theme_minimal(base_size = 13) +
+  ggplot2::theme(legend.position = "bottom")
+
+pm <- ggplot2::ggplot(sim_A_rep |> dplyr::filter(t >= t_min),
+                      ggplot2::aes(t, m, colour = group)) +
+  ggplot2::geom_line(linewidth = 0.5, alpha = 0.9) +
+  ggplot2::scale_colour_manual(values = cols_ctx) +
+  ggplot2::labs(x = "Time step", y = "Mean symptom activation  m(t)", colour = NULL) +
+  ggplot2::theme_minimal(base_size = 13) +
+  ggplot2::theme(legend.position = "none")
+
+pP / pm
+
+```
+
+> Scenario A is the control case:  $βJ<4$, so the fast layer has a single stable equilibrium $m^∗(P)$ for every context level $P$.  
+Groups differ only in the baseline context $P_{base}$; realized $P_t$ then fluctuates around it (and can shift a bit due to feedback $b>0$).   
+As expected, the context trajectories separate smoothly, and the symptom mean $m_t$ follows smoothly as well—no jumps, no hysteresis, no regime switching. 
+
+```{r}
+p_overlay_A <- ggplot2::ggplot() +
+  ggplot2::geom_line(
+    data = res_A$bf |> dplyr::filter(stable),
+    ggplot2::aes(P, m),
+    linewidth = 1.1,
+    colour = "grey20"
+  ) +
+  ggplot2::geom_point(
+    data = sim_A_rep |> dplyr::filter(t > burn_in),
+    ggplot2::aes(P, m, colour = group),
+    alpha = 0.12, size = 0.6
+  ) +
+  ggplot2::scale_colour_manual(values = cols_ctx) +
+  ggplot2::labs(
+    title = "Scenario A: monostable mapping from context to symptoms",
+    subtitle = expression(
+      "Curve: mean-field equilibrium " ~ m^{"*"}*(P) ~
+        ". Points: simulated trajectory " ~ (P[t] ~ "," ~ m[t]) ~ "."
+    ),
+    x = "Context load  P",
+    y = "Mean symptoms  m",
+    colour = NULL
+  ) +
+  ggplot2::theme_minimal(base_size = 13) +
+  ggplot2::theme(legend.position = "none")
+
+p_overlay_A
+
+```
+
+> Each dot is one time step: the system’s context $P_t$ on the x-axis and the observed mean symptom activation $m_t$ on the y-axis.  
+The black curve is the mean-field equilibrium $m^∗(P)$, the unique stable mapping in Scenario A since $βJ<4$.  
+The two groups differ only in baseline context, so they occupy different regions of $P$, and therefore different regions of $m$, but they follow the same underlying curve.  
+The cloudiness around the curve is finite-size and stochastic update noise. The key point is: monostability gives smooth context → smooth symptom differences.
+
+---
+
+
+
+## ***Scenario B***: hysteresis under a slow context ramp (no feedback)
+
+**Goal**: demonstrate path dependence when the fast layer is bistable-capable ($βJ>4$), even when context is purely exogenous.
+
+**Mechanism**: set feedback off ($b=0$) and impose a slow up–down ramp in the baseline context $P_{base}(t)$.
+As $P_{base}(t)$ rises, the system tends to track the low-symptom branch until it loses stability and jumps high; when the ramp decreases, it remains high until the opposite threshold is crossed.
+Plotting $m$ vs $P$ reveals a hysteresis loop (same $P$, different $m$, depending on history).
+
+
+Here we use the same bistable fast layer for B and C:
+
+```{r}
+#| label: params-fast-BC
+#| include: true
+
+par_fast_BC <- list(
+  n_nodes = 100,
+  sweeps  = 40,
+  beta    = beta_BC,
+  J       = J_BC,
+  h0      = h0_BC,
+  gammaP  = gammaP_BC
+)
+```
+
+
+
+```{r}
+#| label: scenario-B2
+#| include: true
+#| fig-width: 12
+#| fig-height: 6.5
+
+
+Pbase_fun <- make_ramp_Pbase(
+  T_steps = 8000,
+  Pmin = -0.6,
+  Pmax =  0.6,
+  frac_up = 0.5
+)
+
+par_slow_B2 <- list(
+  dt       = 0.02,
+  kappa    = 0.15,   # allow P to track the ramp (not too stiff)
+  b        = 0.00,   # no feedback
+  m_star   = 0.30,
+  sigmaP   = 0.02,   # low noise for clean hysteresis
+  lambda_m = 0.001
+)
+
+# sim_B2 <- do.call(simulate_slowfast_cw01_timevaryingPbase, c(
+#   list(
+#     T_steps = 8000,
+#     P_base_fun = Pbase_fun,
+#     P0 = -0.6,
+#     m0 = 0.05,
+#     seed = 321
+#   ),
+#   par_fast_BC,
+#   par_slow_B2
+# ))
+
+# saveRDS(sim_B2, "res/sim_B2.rds")
+sim_B2 <- readRDS("res/sim_B2.rds")
+
+
+# Make sure your Pbase_fun is deterministic (same ramp each time)
+# and that simulate_slowfast_cw01_timevaryingPbase uses `seed` properly.
+run_B2_reps_furrr <- function(
+  n_rep = 30,
+  seed_base = 9000,
+  T_steps = 8000,
+  Pbase_fun,
+  P0 = -0.6,
+  m0 = 0.05,
+  par_fast = par_fast_BC,
+  par_slow = par_slow_B2
+) {
+  seeds <- seed_base + seq_len(n_rep)
+
+  furrr::future_map_dfr(
+    seq_along(seeds),
+    function(i) {
+      seed_i <- seeds[i]
+
+      sim <- do.call(simulate_slowfast_cw01_timevaryingPbase, c(
+        list(
+          T_steps = T_steps,
+          P_base_fun = Pbase_fun,
+          P0 = P0,
+          m0 = m0,
+          seed = seed_i
+        ),
+        par_fast,
+        par_slow
+      ))
+
+      sim$rep <- i
+      sim$seed <- seed_i
+      sim
+    },
+    .options = furrr::furrr_options(seed = TRUE),
+    .progress = TRUE
+  )
+}
+
+
+# sim_B2_all <- run_B2_reps_furrr(
+#   n_rep = 30,
+#   seed_base = 9000,
+#   T_steps = 8000,
+#   Pbase_fun = Pbase_fun,
+#   par_fast = par_fast_BC,
+#   par_slow = par_slow_B2
+# )
+
+# saveRDS(sim_B2_all, "res/sim_B2_all.rds")
+sim_B2_all <- readRDS("res/sim_B2_all.rds")
+
+
+# --- colors (use consistent palette) ---
+col_up   <- "#2C7BB6"  # ramp-up (blue)
+col_down <- "#D7191C"  # ramp-down (red)
+col_base <- "grey35"   # baseline P_base(t)
+col_P    <- "grey10"   # realized P(t)
+
+# --- label helper: ramp phase ---
+T_steps <- max(sim_B2$t, na.rm = TRUE)
+Tup <- floor(T_steps * 0.5)  # matches frac_up = 0.5
+
+dfB <- sim_B2 %>%
+  mutate(
+    phase = if_else(t <= Tup, "ramp up", "ramp down")
+  )
+
+# --- detect jump times (simple heuristic) ---
+# jumps happen when m changes abruptly; threshold can be tuned
+jump_idx <- which(abs(diff(dfB$m)) > 0.4)
+jump_t <- dfB$t[jump_idx + 1]
+
+# also collect corresponding (P, m) points for markers on loop plot
+jump_pts <- dfB %>%
+  filter(t %in% jump_t) %>%
+  select(t, P, m, phase)
+
+base_theme <- theme_minimal(base_size = 15) +
+  theme(
+    plot.title.position = "plot",
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom"
+  )
+
+# ---- Panel 1: P(t) + P_base(t) ----
+pP <- ggplot(dfB, aes(x = t)) +
+  geom_line(aes(y = P), linewidth = 0.8, colour = col_P) +
+  geom_line(aes(y = P_base), linewidth = 0.8, linetype = "dashed", colour = col_base) +
+  geom_vline(xintercept = Tup, linetype = "dotted", colour = "grey55") +
+  labs(
+    title = "Exogenous ramp in baseline context",
+    subtitle = "Solid: realized context P(t).  Dashed: imposed baseline P_base(t).",
+    x = NULL,
+    y = "Context level  P(t)"
+  ) +
+  base_theme
+
+# ---- Panel 2: m(t), colored by phase ----
+pm <- ggplot(dfB, aes(x = t, y = m, colour = phase)) +
+  geom_line(linewidth = 0.8, alpha = 0.95) +
+  # optional: mark detected jumps
+  geom_vline(xintercept = jump_t, linetype = "dashed", colour = "grey55", linewidth = 0.5) +
+  geom_vline(xintercept = Tup, linetype = "dotted", colour = "grey55") +
+  scale_colour_manual(values = c("ramp up" = col_up, "ramp down" = col_down)) +
+  labs(
+    x = "Time step",
+    y = "Mean symptom level m(t)",
+    colour = NULL
+  ) +
+  base_theme
+
+# ---- Panel 3: hysteresis loop in (P, m) ----
+ploop <- ggplot(dfB, aes(x = P, y = m, colour = phase)) +
+  geom_path(linewidth = 0.8, alpha = 0.7) +
+  # optional: highlight jump points
+  geom_point(data = jump_pts, aes(P, m), size = 2.4, stroke = 0.6) +
+  scale_colour_manual(values = c("ramp up" = col_up, "ramp down" = col_down)) +
+  labs(
+    title = "Hysteresis loop in (P, m)",
+    subtitle = "Same P can map to different m depending on whether context is rising or falling.",
+    x = "Context  P",
+    y = "Mean symptoms  m",
+    colour = NULL
+  ) +
+  base_theme
+
+# ---- Stack them ----
+pP / pm #/ ploop
+```
+
+![](img/B2_hysteresis_phase.gif)
+
+> In Scenario B, the fast layer is bistable ($βJ>4$), but context is purely exogenous: we set $b=0$ and impose a slow ramp $P_{base}(t)$. The realized context $P(t)$ tracks that ramp with inertia (mean reversion) plus noise.  
+In the symptom trace, $m(t)$ stays low as context rises until it reaches an upper threshold—then it jumps to the high mode.   
+On the way back down, $m(t)$ stays high and only drops after crossing a lower threshold.  
+The bottom panel shows the *hysteresis loop*: the same context value $P$ corresponds to different symptom levels depending on whether we arrived there from below or above—this is path dependence from bistability.
+
+***Takeaway***: With two stable modes, the system can stay on the high-symptom branch over a wide range of $P$; switching happens only when the ramp pushes $P$ past the branch limits, creating a loop in $(P,m)$. Clinically, worsening and recovery follow different thresholds: symptoms can remain elevated even after context improves, until improvement is strong enough to cross a lower recovery threshold.
+  
+
+  
+---
+
+## ***Scenario C***: endogenous context via feedback → two regimes
+
+**Goal:** show what changes once *context is no longer purely imposed*. In Scenario C, symptoms slowly push context through feedback, and that endogenous context shift interacts with bistability to produce two qualitatively different long-run patterns:
+  
+* **C1 (capture):** once the system reaches the high-symptom mode, feedback keeps $P_t$ elevated enough that it **stays** there (long dwell, few switches).
+* **C2 (switching):** feedback is weaker and/or noise is stronger, so the system keeps getting **kicked** between modes (many switches, moderate dwell).
+
+
+**Mechanism**
+
+* Fast layer is bistable ($\beta J>4$) ⇒ for a range of $P$, there are two stable symptom equilibria (low and high).
+* Slow layer now includes **feedback** $b>0$:
+$$
+P_{t+1}=P_t + dt\Big[-\kappa(P_t-P_{\text{base}})+b(m_{\text{slow},t}-m_*)\Big] + \sigma_P\sqrt{dt},\varepsilon_t
+$$
+So when symptoms are persistently high ($m_{\text{slow}}>m_*$), context is pushed upward, which in turn supports remaining in the high mode.
+
+
+::: {.callout-tip collapse=true title="What is held fixed vs what varies"}
+
+* **Fixed (same as B):** fast layer parameters ($\beta,J,h_0,\gamma_P$) and the bistable geometry.
+* **Varied (Scenario C only):** slow-layer parameters ($\kappa, b, \sigma_P, m_*$) controlling:
+  
+  * how tightly $P_t$ is pulled back to baseline ($\kappa$),
+  * how strongly symptoms reshape context ($b$),
+  * how often noise knocks you across basins ($\sigma_P$),
+  * where feedback changes sign ($m_*$).
+:::
+
+
+#### Shared: fast layer and group baselines
+
+```{r}
+#| label: C-baselines
+#| include: true
+#| code-fold: show
+
+# ---------------------------
+# Scenario C: shared setup
+# ---------------------------
+
+# Fast layer (same bistable setting as Scenario B)
+par_fast_BC <- list(
+  n_nodes = 100,
+  sweeps  = 40,        # keep constant across scenarios if you want
+  beta    = beta_BC,
+  J       = J_BC,      # beta*J > 4 => bistable-capable
+  h0      = h0_BC,
+  gammaP  = gammaP_BC
+)
+
+# Baselines: one group safely low, one near the bistable window so feedback matters
+P_bases_C <- c(P_low_fold - 0.8, 0.0)
+labels_C  <- c("Lower baseline context", "Higher baseline context")
+
+```
+
+
+#### Grid-search for a clean C1 (tipping) & C2 (switching)
+
+Why search at all? In C, the regime (“capture” vs “switching”) depends on a balance: restoring force 
+$\kappa$ vs feedback $b$ vs noise $\sigma_P$. Rather than hand-tuning, we do a small grid search, score candidates using switching/dwell summaries, and keep one representative parameter set for each regime.
+
+
+```{r}
+#| label: grid-search
+#| include: true
+#| eval: false
+
+# Build cache once
+cache_BC <- make_diag_cache(par_fast_BC, P_grid = seq(-2, 2, length.out = 250))
+
+# ---- C1 search (capture) ----
+grid_C1 <- tidyr::crossing(
+  kappa = c(0.10, 0.16),
+  b     = c(0.28, 0.36),
+  sigmaP= c(0.03, 0.06),
+  m_star= c(0.12, 0.18)
+)
+
+cand_C1 <- grid_search_C(
+  par_fast = par_fast_BC, P_bases = P_bases_C, labels = labels_C,
+  grid = grid_C1, cache = cache_BC, scenario_prefix = "C1-cand",
+  T_steps = 2000, n_rep = 4, burn_in = 200, seed_base = 6000
+)
+
+best_C1 <- cand_C1 |>
+  dplyr::rowwise() |>
+  dplyr::mutate(score = score_C1(dplyr::pick(dplyr::everything()))) |>
+  dplyr::ungroup() |>
+  dplyr::arrange(dplyr::desc(score)) |>
+  dplyr::slice(1)
+
+# saveRDS(best_C1, "res/best_C1_v2.rds")
+
+
+# ---- C2 search (switching) ----
+grid_C2 <- tidyr::crossing(
+  kappa = c(0.22, 0.30, 0.38),
+  b     = c(0.10, 0.16, 0.20),
+  sigmaP= c(0.10, 0.16, 0.20),
+  m_star= c(0.25)
+)
+
+cand_C2 <- grid_search_C(
+  par_fast = par_fast_BC, P_bases = P_bases_C, labels = labels_C,
+  grid = grid_C2, cache = cache_BC, scenario_prefix = "C2-cand",
+  T_steps = 2000, n_rep = 4, burn_in = 200, seed_base = 8000
+)
+
+best_C2 <- cand_C2 |>
+  dplyr::rowwise() |>
+  dplyr::mutate(score = score_C2(dplyr::pick(dplyr::everything()))) |>
+  dplyr::ungroup() |>
+  dplyr::arrange(dplyr::desc(score)) |>
+  dplyr::slice(1)
+
+# saveRDS(best_C2, "res/best_C2_v2.rds")
+
+```
+
+
+
+#### Run final C1 and C2 diagnostics with the selected parameters
+
+```{r}
+#| label: C-final
+#| include: true
+
+best_C1 <- readRDS("res/best_C1_v2.rds")
+best_C2 <- readRDS("res/best_C2_v2.rds")
+
+best_C1_row <- best_C1 %>% slice(1)
+best_C2_row <- best_C2 %>% slice(1)
+
+par_slow_C1 <- list(
+  dt=0.02,
+  kappa = best_C1_row$kappa[[1]],
+  b     = best_C1_row$b[[1]],
+  sigmaP= best_C1_row$sigmaP[[1]],
+  m_star= best_C1_row$m_star[[1]],
+  lambda_m=0.001
+)
+
+par_slow_C2 <- list(
+  dt=0.02,
+  kappa = best_C2_row$kappa[[1]],
+  b     = best_C2_row$b[[1]],
+  sigmaP= best_C2_row$sigmaP[[1]],
+  m_star= best_C2_row$m_star[[1]],
+  lambda_m=0.001
+)
+
+
+labels_C <- c("Lower baseline context", "Higher baseline context")
+P_bases_C <- c(P_low_fold - 0.8, 0.0)
+
+
+# res_C1 <- run_scenario_diagnostics(
+#   scenario_name = "C1 (βJ>4, feedback tipping; selected)",
+#   par_fast = par_fast_BC,
+#   par_slow = par_slow_C1,
+#   P_bases  = P_bases_C,
+#   labels   = labels_C,
+#   T_steps  = 6000,
+#   n_rep    = 30,
+#   seed_base = 12000,
+#   burn_in = 500,
+#   parallel_reps = TRUE,
+#   parallel_groups = FALSE
+# )
+
+# saveRDS(res_C1, "res/res_C1_v2.rds")
+res_C1 <- readRDS("res/res_C1.rds")
+
+# res_C2 <- run_scenario_diagnostics(
+#   scenario_name = "C2 (βJ>4, metastable switching; selected)",
+#   par_fast = par_fast_BC,
+#   par_slow = par_slow_C2,
+#   P_bases  = P_bases_C,
+#   labels   = labels_C,
+#   T_steps  = 6000,
+#   n_rep    = 30,
+#   seed_base = 15000,
+#   burn_in = 500,
+#   parallel_reps = TRUE,
+#   parallel_groups = FALSE
+# )
+# saveRDS(res_C2, "res/res_C2_v2.rds")
+res_C2 <- readRDS("res/res_C2.rds")
+```
+
+
+
+
+```{r}
+#| fig-width: 10
+
+group_map <- c(
+  "Low precarity"  = "Lower baseline context",
+  "High precarity" = "Higher baseline context"
+)
+
+cols_ctx <- c(
+  "Higher baseline context" = "#FF5733",
+  "Lower baseline context"  = "#7ABD7D"
+)
+
+# pick representative replicate per group (closest to group mean mean_m)
+rep_pick_C1 <- res_C1$metrics |>
+  dplyr::group_by(scenario, group) |>
+  dplyr::mutate(target = mean(mean_m)) |>
+  dplyr::slice_min(abs(mean_m - target), n = 1, with_ties = FALSE) |>
+  dplyr::ungroup() |>
+  dplyr::select(rep, group)
+
+sim_C1_rep <- res_C1$sim_all |>
+  dplyr::inner_join(rep_pick_C1, by = c("rep","group")) |>
+  dplyr::mutate(group = dplyr::recode(group, !!!group_map))
+
+
+burn_in <- 500
+
+p_ts_C1 <- plot_timeseries_with_folds(
+  sim_df   = sim_C1_rep,
+  folds    = res_C1$bif_info,
+  title    = "Scenario C1: feedback-driven capture",
+  burn_in  = burn_in,
+  cols     = cols_ctx   # see note below
+)
+
+p_ov_C1 <- plot_branch_overlay(
+  bf       = res_C1$bf,
+  bif_info = res_C1$bif_info,
+  sim_df   = sim_C1_rep,
+  title    = "Scenario C1: capture on the high branch",
+  burn_in  = burn_in,
+  cols     = cols_ctx,
+  ribbon_alpha = 0.12,
+  max_points_per_group = 6000  # for C1, don’t thin too aggressively
+) 
+
+p_ts_C1
+
+```
+
+```{r}
+#| fig-width: 7
+#| fig-height: 4
+#
+p_ov_C1
+```
+
+* **Top time-series panel $P(t)$:**
+  The “high baseline context” group starts near $P \approx 0$, then **drifts upward over time**. That drift is not imposed (unlike Scenario B). It is generated by **feedback** from symptoms: when $m_{\text{slow}}$ rises above $m_*$, the drift term $b(m_{\text{slow}}-m_*)$ pushes $P$ upward.
+  
+  - The lower-baseline group stays around a clearly negative context region the entire time.
+
+  - The higher-baseline group starts near the bistable window and then shows an endogenous upward drift in context.
+
+  - Crucially, this is not imposed (unlike Scenario B). In C1, context is partly generated by symptoms through feedback $b>0$.
+  
+  
+* **Middle time-series panel $m(t)$:**
+The higher-baseline group low for a while, then **jumps sharply** to $m \approx 1$ and remains there. This is the “capture” event (i.e., *locking-in*): once it hits the high-symptom basin, the feedback raises $P$ enough that the high basin remains self-supported.
+
+
+* **Bottom $m$ vs $P$ overlay (bifurcation diagram):**
+
+  * The black curves are the mean-field equilibria $m^*(P)$ (stable branches), the dashed curve is unstable, and the grey band is the bistable window.
+  * The dots show the system’s visited $(P_t, m_t)$ pairs.
+  * The trajectory for the higher-baseline group:
+
+    1. enters the **bistable window** near $P\approx 0$, still on the low branch,
+    2. then flips up to the high branch,
+    3. and subsequently “moves rightward” to larger $P$ because feedback keeps pushing context upward.
+  
+* That “move right and stay high” is the visual fingerprint of a **self-reinforcing loop**:
+$$
+  \text{high } m \Rightarrow \text{pushes } P \uparrow \Rightarrow \text{stabilizes high } m
+$$
+  
+
+
+
+***Takeaway***: C1 shows feedback-driven capture: once symptoms jump into the high basin, feedback pushes context $P$ upward, which stabilizes continued high symptoms—so the system stays high with long dwell and few returns. Symptoms increase → context worsens → symptoms stay high.
+
+
+```{r}
+ms_C2_talk <- res_C2$metrics_summary |>
+  dplyr::mutate(
+    group = dplyr::recode(group, !!!group_map),
+    frac_high_branch = dplyr::if_else(is.nan(frac_high_branch), NA_real_, frac_high_branch),
+    med_high_dwell   = dplyr::if_else(is.nan(med_high_dwell),   NA_real_, med_high_dwell)
+  ) |>
+  dplyr::transmute(
+    Group            = group,
+    `Mean context (P)`   = mean_P,
+    `Mean symptoms (m)`  = mean_m,
+    `Pr(m>0.5)`       = frac_high_abs,
+    `Switches`        = n_switch,
+    `Median high dwell` = med_high_dwell
+  ) |>
+  dplyr::mutate(dplyr::across(where(is.numeric), ~ round(.x, 3)))
+
+knitr::kable(
+  ms_C2_talk,
+  align = "lrrrrr",
+  caption = "Scenario C2 summary (bistable + feedback: frequent switching)."
+) |>
+  kableExtra::kable_styling(full_width = TRUE,
+                            bootstrap_options = c("striped","condensed")) |>
+  kableExtra::row_spec(0, bold = TRUE)
+
+```
+
+
+```{r}
+#| fig-width: 10
+
+# 1) pick representative replicate per group (closest to group-average mean_m)
+rep_pick_C2 <- res_C2$metrics |>
+  dplyr::group_by(scenario, group) |>
+  dplyr::mutate(target = mean(mean_m)) |>
+  dplyr::slice_min(abs(mean_m - target), n = 1, with_ties = FALSE) |>
+  dplyr::ungroup() |>
+  dplyr::select(rep, group)
+
+# 2) build representative trajectory and relabel groups to match cols_ctx
+sim_C2_rep <- res_C2$sim_all |>
+  dplyr::inner_join(rep_pick_C2, by = c("rep","group")) |>
+  dplyr::mutate(group = dplyr::recode(group, !!!group_map))
+
+# 3) time-series plot (full time; folds shown if present)
+p_ts_C2 <- plot_timeseries_with_folds(
+  sim_df  = sim_C2_rep,
+  folds   = res_C2$bif_info,
+  title   = "Scenario C2: feedback-driven switching (representative runs)",
+  burn_in = burn_in,
+  cols    = cols_ctx
+)
+
+# 4) overlay on bifurcation diagram (avoid aggressive thinning while debugging)
+set.seed(1)
+p_ov_C2 <- plot_branch_overlay(
+  bf       = res_C2$bf,
+  bif_info = res_C2$bif_info,
+  sim_df   = sim_C2_rep,
+  title    = "Scenario C2: repeated switching inside the bistable window",
+  burn_in  = burn_in,
+  cols     = cols_ctx,
+  ribbon_alpha = 0.12,
+  max_points_per_group = 6000
+)
+
+p_ts_C2
+
+```
+
+```{r}
+#| fig-width: 7
+#| fig-height: 4
+#
+p_ov_C2
+
+```
+
+#### Top panel: context $P(t)$
+
+* The higher-baseline group wanders **within/near the bistable window** but does **not** drift monotonically upward the way C1 does.
+* Noise + weaker/less stabilizing feedback means the system keeps being perturbed back and forth across the region where both modes are possible.
+
+#### Middle panel: symptoms $m(t)$
+
+* The higher-baseline group shows **repeated episodes** of being high and then returning low: many switches.
+* The lower-baseline group remains low and does not enter the switching region (consistent with your summary table: switches ~0, Pr(m>0.5)=0).
+
+#### Bottom panel: bifurcation diagram
+
+* The higher-baseline group’s points populate both the low and high branches **inside the bistable window**.
+* The frequent vertical transitions in the overlay correspond to the time-series switching events.
+* The key distinction vs C1 is **lack of permanent “locking-in”**: it can visit the high mode but does not get trapped there long-term.
+
+***Takeaway***: C2 shows *episodic instability*; the system repeatedly toggles between low and high symptom modes because feedback isn’t strong enough to lock the trajectory onto one branch.
+
+
+---
+# so,WHAT IS THE POINT? 
+
+
+## Conclusion: what’s the point?
+
+People often take different symptom networks (e.g., different partial correlations) as evidence that the symptoms interact differently across groups (“higher connectivity,” “stronger coupling,” etc.).
+
+Our simulations show a simpler alternative:
+
+**Networks can look different even when the underlying symptom-to-symptom coupling is identical.**
+In our model, the coupling parameter (J) is held fixed — yet the cross-sectional structure you would estimate from snapshots changes a lot across scenarios and groups.
+
+### Why networks can differ without changing coupling
+
+1. **Different context distributions → different parts of the same curve (Scenario A).**
+   Groups sit at different typical context levels (P), so they have different symptom levels (m), different variability, and different prevalence patterns. That alone can change correlations/partial correlations.
+
+2. **History effects / hysteresis (Scenario B).**
+   Even with the same (P), symptoms can differ depending on whether context recently worsened or improved. So “same context, different symptoms” is possible purely because of system dynamics.
+
+3. **Different time spent in low vs high mode (Scenario C).**
+With feedback, one group can get “stuck high” (capture) while another keeps switching. That changes the mixture of states in the data, which can strongly reshape the estimated network.
+
+### Takeaway 
+
+"So, observed group differences do *not* automatically imply different internal coupling — they may reflect different context exposure, different dynamics (hysteresis), and different time spent in symptom regimes."
+
+
+
+<!-- Apparent “higher connectivity” can be a measurement artifact of regime mixing and different time-in-state, not a true difference in internal coupling. -->
+<!-- In our model, J is fixed across groups, yet C1/C2 produce markedly different cross-sectional structure because the groups occupy different parts of the bistable landscape (and switch differently). -->
+
+<!-- Key implication for cross-sectional symptom networks: Apparent group differences in partial-correlation “connectivity” do not necessarily imply differences in internal coupling. In our simulations, the fast-layer coupling parameter $J$ is held fixed across groups, yet the inferred cross-sectional structure differs strongly across scenarios because groups occupy different regions of the same bistable landscape and differ in time spent on each branch (capture vs switching). Consequently, network differences can arise from latent context heterogeneity, regime mixing, and unequal time-in-state, rather than true changes in symptom-to-symptom interaction strength. -->
+
+
+<!-- If two groups differ in (i) where their context distribution lies relative to a bistable window, and (ii) how often they switch between low/high symptom regimes, then a single-time snapshot pooled across individuals can produce different partial-correlation networks even when the underlying interaction parameter $J$ is identical. -->
+
+```{r}
+
+cols_ctx <- c(
+  "Higher baseline context" = "#FF5733",
+  "Lower baseline context"  = "#1ABC9C",
+  "B (single condition)"    = "grey20"
+)
+
+group_map <- c(
+  "Low precarity"  = "Lower baseline context",
+  "High precarity" = "Higher baseline context"
+)
+
+summarise_median_iqr <- function(df, scenario_label, burn_in = 0, group_map = NULL) {
+
+  out <- df %>%
+    filter(t > burn_in) %>%
+    mutate(
+      scenario = scenario_label,
+      group = if (!is.null(group_map)) dplyr::recode(group, !!!group_map) else group
+    ) %>%
+    select(scenario, rep, group, t, P, m) %>%
+    pivot_longer(c(m, P), names_to = "var", values_to = "value") %>%
+    group_by(scenario, group, var, t) %>%
+    summarise(
+      q25 = quantile(value, 0.25, na.rm = TRUE),
+      q50 = quantile(value, 0.50, na.rm = TRUE),
+      q75 = quantile(value, 0.75, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  out
+}
+
+burn_in <- 500
+
+df_A_sum  <- summarise_median_iqr(res_A$sim_all,  "A",  burn_in = burn_in, group_map = group_map)
+df_C1_sum <- summarise_median_iqr(res_C1$sim_all, "C1", burn_in = burn_in, group_map = group_map)
+df_C2_sum <- summarise_median_iqr(res_C2$sim_all, "C2", burn_in = burn_in, group_map = group_map)
+
+# B has no group, so create one
+df_B_sum <- sim_B2_all %>%
+  mutate(group = "B (single condition)") %>%
+  summarise_median_iqr("B", burn_in = burn_in, group_map = NULL)
+
+df_all_sum <- bind_rows(df_A_sum, df_B_sum, df_C1_sum, df_C2_sum)
+
+
+```
+
+
+```{r}
+#| fig-width: 15
+#| fig-height: 7
+
+df_raw_all <- bind_rows(
+  res_A$sim_all  %>% mutate(scenario="A",  group = recode(group, !!!group_map)),
+  sim_B2_all     %>% mutate(scenario="B",  group = "B (single condition)"),
+  res_C1$sim_all %>% mutate(scenario="C1", group = recode(group, !!!group_map)),
+  res_C2$sim_all %>% mutate(scenario="C2", group = recode(group, !!!group_map))
+) %>% filter(t > burn_in) %>%
+  pivot_longer(c(m, P), names_to="var", values_to="value")
+
+p_facet_all <- ggplot() +
+  geom_line(
+    data = df_raw_all,
+    aes(t, value, group = interaction(rep, group), colour = group),
+    alpha = 0.07, linewidth = 0.3
+  ) +
+  geom_ribbon(
+    data = df_all_sum,
+    aes(t, ymin = q25, ymax = q75, fill = group),
+    alpha = 0.18, colour = NA
+  ) +
+  geom_line(
+    data = df_all_sum,
+    aes(t, q50, colour = group),
+    linewidth = 0.8
+  ) +
+  facet_grid(var ~ scenario, scales="free_y") +
+  scale_colour_manual(values = cols_ctx) +
+  scale_fill_manual(values = cols_ctx) +
+  labs(
+    title = "Replicates (faint) + median and IQR (bold)",
+    x = "Time step", y = "", colour = NULL, fill = NULL
+  ) +
+  theme_minimal(base_size = 18) +
+  theme(legend.position="bottom", panel.grid.minor = element_blank())
+
+p_facet_all
+
+```
+
+
+
+
+
+
+
+
+# Robustness checks (A–C2)
+
+  We include small, local robustness checks to show that the qualitative behavior illustrated by each scenario is **not an artifact of a single fine-tuned parameter choice**. The checks are intentionally minimal and scenario-specific:
+
+* **Scenario A:** relies on the analytic mean-field condition for monostability (**βJ < 4**). We verify it remains satisfied under ±10% perturbations of β and J.
+* **Scenarios B:** rely on the existence of a **bistable fast-layer window** with folds. We verify that the bistable window and fold locations persist under ±10% perturbations of β or J.
+* **Scenarios C1/C2:** rely on a **regime label** (“C1-like tipping” vs “C2-like switching”). We verify that the C1/C2 label (computed from the same scoring logic used for selection) is unchanged under ±10% perturbations of **b** or **σP**.
+
+
+
+## A. Scenario A: monostability condition under ±10% in β and J
+
+
+```{r}
+#| label: robustness-A
+#| include: true
+
+
+beta_A <- par_fast_A$beta
+J_A    <- par_fast_A$J
+
+betaJ_base <- beta_A * J_A
+betaJ_min  <- (0.9 * beta_A) * (0.9 * J_A)
+betaJ_max  <- (1.1 * beta_A) * (1.1 * J_A)
+
+rob_A <- tibble(
+  scenario = "A (βJ<4; single equilibrium)",
+  beta = beta_A,
+  J    = J_A,
+  betaJ = betaJ_base,
+  betaJ_min_pm10 = betaJ_min,
+  betaJ_max_pm10 = betaJ_max,
+  monostable_under_pm10 = (betaJ_max < 4)
+)
+
+kable(rob_A, digits = 3,
+      caption = "Scenario A robustness: the monostability condition βJ<4 remains satisfied under ±10% perturbations of β and J.")
+```
+
+
+
+
+
+## B. Scenarios B1/B2: bistable window + folds persist under ±10% in β or J
+
+  This checks the *structural* prerequisite for B1/B2 (and C): a bistable fast-layer window with two stable fixed points over a range of P.
+
+```{r}
+#| label: robustness-B-folds
+#| include: true
+
+
+get_fold_window <- function(beta, J, h0, gammaP, P_grid = seq(-2, 2, length.out = 400)){
+  bf   <- cw01_bifurcation_curve(P_grid, beta = beta, J = J, h0 = h0, gammaP = gammaP)
+  info <- extract_bifurcation_info(bf)
+
+  tibble(
+    beta = beta,
+    J = J,
+    betaJ = beta * J,
+    bistable = info$bistable,
+    P_low_fold = info$P_low_fold,
+    P_high_fold = info$P_high_fold
+  )
+}
+
+base <- get_fold_window(par_fast_BC$beta, par_fast_BC$J, par_fast_BC$h0, par_fast_BC$gammaP) %>%
+  mutate(perturb = "baseline")
+
+pm10 <- bind_rows(
+  get_fold_window(0.9 * par_fast_BC$beta, par_fast_BC$J, par_fast_BC$h0, par_fast_BC$gammaP) %>% mutate(perturb = "beta -10%"),
+  get_fold_window(1.1 * par_fast_BC$beta, par_fast_BC$J, par_fast_BC$h0, par_fast_BC$gammaP) %>% mutate(perturb = "beta +10%"),
+  get_fold_window(par_fast_BC$beta, 0.9 * par_fast_BC$J, par_fast_BC$h0, par_fast_BC$gammaP) %>% mutate(perturb = "J -10%"),
+  get_fold_window(par_fast_BC$beta, 1.1 * par_fast_BC$J, par_fast_BC$h0, par_fast_BC$gammaP) %>% mutate(perturb = "J +10%")
+)
+
+rob_B <- bind_rows(base, pm10) %>%
+  select(perturb, beta, J, betaJ, bistable, P_low_fold, P_high_fold)
+
+kable(rob_B, digits = 3,
+      caption = "Scenarios B1/B2 robustness: the fast-layer bistable window and fold locations persist under ±10% perturbations of β or J.")
+```
+
+
+
+## C. Scenarios C1/C2: C1-vs-C2 label stability under ±10% in b or σP
+
+  Here we test the specific concern: that the **C1/C2 classification** might depend on a finely tuned choice of **slow feedback gain b** or **slow noise amplitude σP**.
+We recompute a regime label for the **High precarity group** using *your existing scoring functions* (`score_C1`, `score_C2`) and verify agreement with the baseline label.
+
+
+```{r}
+#| label: robustness-C-label
+#| include: true
+
+
+# Ensure cache exists (needed by run_scenario_diagnostics_cached)
+if (!exists("cache_BC")) {
+  cache_BC <- make_diag_cache(par_fast_BC, P_grid = seq(-2, 2, length.out = 250))
+}
+
+# Convert one-row metrics tibble -> label using your selection logic
+label_from_metrics <- function(ms_row){
+  s1 <- score_C1(ms_row)
+  s2 <- score_C2(ms_row)
+  ifelse(s1 >= s2, "C1-like", "C2-like")
+}
+
+# Run one perturbed version and extract high-precarity label + key metrics
+run_C_label_once <- function(tag, par_slow_base, mult_b = 1, mult_sigmaP = 1,
+                             T_steps = 1500, n_rep = 4, burn_in = 300, seed_base = 9000){
+
+  par_slow <- par_slow_base
+  par_slow$b      <- par_slow$b * mult_b
+  par_slow$sigmaP <- par_slow$sigmaP * mult_sigmaP
+
+  res <- run_scenario_diagnostics_cached(
+    scenario_name = tag,
+    par_fast = par_fast_BC,
+    par_slow = par_slow,
+    P_bases  = P_bases_C,
+    labels   = labels_C,
+    T_steps  = T_steps,
+    cache    = cache_BC,
+    n_rep    = n_rep,
+    seed_base = seed_base,
+    burn_in  = burn_in
+  )
+
+  ms <- res$metrics_summary %>%
+    filter(group == labels_C[2]) %>%   # High precarity group
+    slice(1)
+
+  tibble(
+    perturb = tag,
+    b = par_slow$b,
+    sigmaP = par_slow$sigmaP,
+    label = label_from_metrics(ms),
+    mean_m = ms$mean_m,
+    frac_high_abs = ms$frac_high_abs,
+    n_switch = ms$n_switch,
+    med_high_dwell = ms$med_high_dwell
+  )
+}
+
+robustness_C_for_one <- function(name, par_slow_base,
+                                 T_steps = 2500, n_rep = 6, burn_in = 400, seed_base = 9000){
+
+  runs <- bind_rows(
+    run_C_label_once(paste0(name, ": baseline"), par_slow_base,
+                     mult_b = 1, mult_sigmaP = 1,
+                     T_steps = T_steps, n_rep = n_rep, burn_in = burn_in, seed_base = seed_base),
+
+    run_C_label_once(paste0(name, ": b -10%"), par_slow_base,
+                     mult_b = 0.9, mult_sigmaP = 1,
+                     T_steps = T_steps, n_rep = n_rep, burn_in = burn_in, seed_base = seed_base + 100),
+
+    run_C_label_once(paste0(name, ": b +10%"), par_slow_base,
+                     mult_b = 1.1, mult_sigmaP = 1,
+                     T_steps = T_steps, n_rep = n_rep, burn_in = burn_in, seed_base = seed_base + 200),
+
+    run_C_label_once(paste0(name, ": sigmaP -10%"), par_slow_base,
+                     mult_b = 1, mult_sigmaP = 0.9,
+                     T_steps = T_steps, n_rep = n_rep, burn_in = burn_in, seed_base = seed_base + 300),
+
+    run_C_label_once(paste0(name, ": sigmaP +10%"), par_slow_base,
+                     mult_b = 1, mult_sigmaP = 1.1,
+                     T_steps = T_steps, n_rep = n_rep, burn_in = burn_in, seed_base = seed_base + 400)
+  )
+
+  base_label <- runs$label[1]
+
+  runs %>%
+    mutate(
+      scenario = name,
+      baseline_label = base_label,
+      agree_with_baseline = (label == base_label)
+    ) %>%
+    select(scenario, perturb, baseline_label, label, agree_with_baseline,
+           b, sigmaP, mean_m, frac_high_abs, n_switch, med_high_dwell)
+}
+
+# rob_C1 <- robustness_C_for_one("C1 (selected)", par_slow_C1,
+#                                T_steps = 2500, n_rep = 6, burn_in = 400, seed_base = 9100)
+#
+# rob_C2 <- robustness_C_for_one("C2 (selected)", par_slow_C2,
+#                                T_steps = 2500, n_rep = 6, burn_in = 400, seed_base = 10100)
+
+# saveRDS(rob_C1, "res/rob_C1.rds")
+# saveRDS(rob_C2, "res/rob_C2.rds")
+
+rob_C1 <- readRDS("res/rob_C1.rds")
+rob_C2 <- readRDS("res/rob_C2.rds")
+
+rob_C <- bind_rows(rob_C1, rob_C2)
+
+kable(rob_C, digits = 3,
+      caption = "Scenario C robustness: the High-precarity regime label (C1-like vs C2-like, computed from score_C1/score_C2) remains stable under ±10% perturbations of b or σP.")
+```
+
+
+
+  > Across all scenarios, the qualitative regime claims are locally robust to small parameter perturbations. In Scenario A, the monostability condition βJ<4 remains satisfied under ±10% perturbations of β and J. For Scenarios B1/B2, the fast-layer bistable window (and fold locations) persists under ±10% perturbations of β or J, indicating that fold sensitivity and hysteresis demonstrations do not depend on a knife-edge fast-layer configuration. Finally, for Scenarios C1/C2, the regime label (C1-like tipping vs C2-like metastable switching), computed from the same metric-based scoring used in scenario selection, remains unchanged under ±10% perturbations of the slow feedback gain b or slow noise amplitude σP.
+
+
+

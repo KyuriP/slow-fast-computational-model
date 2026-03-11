@@ -1,0 +1,1394 @@
+---
+title: "Slow–Fast Coupling_v5: Curie–Weiss Symptoms Under Context Dynamics"
+description: |
+  We study a slow–fast hybrid system in which a fast, Ising-like (Curie–Weiss) symptom layer is coupled to a slow contextual process with feedback and noise. Simulations illustrate how slow contextual differences can drive tipping or switching-like patterns in symptoms without changing the symptom-layer coupling.
+author: 
+  - name: Kyuri Park
+    email: k.park@uva.nl
+    affiliations: 
+      - name: Computational Science Lab ![](img/csl.png){width=30%}
+date: today 
+title-block-banner: true
+format:
+  html:
+    code-fold: true
+    code-summary: "Show the code"
+    code-link: true
+    embed-resources: true
+toc: true
+toc-depth: 3
+theme: flatly
+highlight-style: github
+echo: true
+warning: false
+message: false
+editor: 
+  markdown: 
+    wrap: 72
+---
+
+
+```{r}
+#| label: setup
+#| include: true
+
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(tibble)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+library(patchwork)
+
+library(future)
+library(furrr)
+
+# Reproducible parallel RNG
+set.seed(123)
+RNGkind("L'Ecuyer-CMRG")
+plan(multisession, workers = max(1, parallel::detectCores() - 3))
+
+source("R/utils_fastlayer.R")
+source("R/utils_slowfast.R")
+source("R/utils_plotting.R")
+source("R/utils_diagnostics.R")
+source("R/utils_gridsearch.R")
+
+```
+
+
+# 1. Motivation
+
+Mental health symptoms fluctuate on fast time scales (hours–days), while
+socio-economic pressures (e.g., financial precarity, discrimination, workload) change more slowly (months–years). Standard symptom-network
+models often (i) treat symptoms as a closed system and (ii) attribute
+group differences in symptom dynamics to internal network differences.
+
+Here we explicitly couple:
+  
+* a **fast 0/1 Curie–Weiss symptom layer** (binary symptoms with mean-field reinforcement),
+* a **slow context variable** $P_t$ that drifts gradually,
+* **feedback** from symptoms back into context,
+* and (optionally) **rare jump shocks** affecting context.
+
+![](img/slowfast.png){width="70%"}
+
+We show how group differences in symptom trajectories can arise from:
+  
+* different **context baselines** $P_{\text{base}}$,
+* different **regime structure** (monostable vs bistable fast layer),
+* plus (optionally) **acute events** (shocks),
+
+while keeping the **fast-layer mechanism identical within a regime**.
+
+
+
+# 2. Fast layer: 0/1 Curie–Weiss symptom dynamics
+
+We use spins
+
+$$
+  s_i \in {0,1},
+  \qquad
+  m = \frac{1}{N}\sum_i s_i \in [0,1].
+$$
+
+Here $m$ is the fraction of active symptoms (a fast summary “symptom load”).
+
+## Mean-field input (“field”)
+
+$$
+  H = J(m - \tfrac{1}{2}) + h_0 + \gamma_P P.
+$$
+
+* $J$: within-layer coupling (symptom reinforcement).
+* $h_0$: baseline bias.
+* $\gamma_P$: context-to-symptom gain (how strongly $P$ shifts the layer).
+
+## Stochastic activation rule
+
+$$
+  \Pr(s_i=1 \mid m, P)=\sigma(\beta H), \qquad
+  \sigma(x)=\frac{1}{1+e^{-x}}.
+$$
+
+* $\beta$: sensitivity (sharpness of response).
+
+
+## Key regime condition: bistability
+
+For the 0/1 Curie–Weiss model, bistability occurs when:
+$$
+    \beta J > 4.
+$$
+
+**Interpretation.**
+  
+* If $\beta J < 4$: one stable equilibrium $m^*(P)$ for each $P$ (smooth tracking).
+* If $\beta J > 4$: two stable equilibria can coexist for a range of $P$ (low vs high symptom modes), enabling hysteresis and capture.
+
+
+# 3. Slow layer: context dynamics (OU + feedback + noise + optional jumps)
+
+We represent context as a continuous variable (P_t), updated by Euler–Maruyama:
+  
+$$
+    P_{t+1} = P_t
+    +\Big[-\kappa(P_t-P_{\text{base}})+b,(m_{\text{slow},t}-m_*)\Big]dt
+    +\sigma_P \sqrt{dt}\epsilon_t
+    +\xi_t,
+    \qquad \epsilon_t\sim \mathcal{N}(0,1).
+$$
+
+* **Mean reversion**: $-\kappa(P_t-P_{\text{base}})$
+* **Feedback**: $b(m_{\text{slow},t}-m_*)$
+* **Diffusion noise**: $\sigma_P\sqrt{dt}\epsilon_t$
+* **Jump shocks**: $\xi_t$
+
+## Slow symptom trace ($m_{\text{slow}}$) (what context “sees”)
+
+We smooth fast symptom load via an exponentially weighted moving average (*EWMA*) (:
+
+$$
+    m_{\text{slow},t+1}=m_{\text{slow},t}+\lambda_m,(m_t-m_{\text{slow},t}).
+$$
+
+Small $\lambda_m$ means context reacts to *persistent burden*, not momentary spikes.
+
+---
+  
+# 4. Discrete shocks (v3 simplified jump process)
+  
+In v3 we implement **rare acute events** as an additive jump term $\xi_t$ in the context update. In discrete time, we write:
+
+$$
+    \xi_t = I_t A_t,
+$$
+
+where $I_t\in{0,1}$ indicates whether a shock occurs during $[t,t+dt)$, and $A_t$ is the shock magnitude.
+
+
+### Exogenous shocks (constant hazard)
+
+Exogenous shocks arrive as a Poisson process with constant intensity $\lambda_{\text{exo}}$:
+
+$$
+    p_{\text{exo}} = 1 - e^{-\lambda_{\text{exo}}dt},\qquad
+    I_t^{(\text{exo})} \sim \mathrm{Bernoulli}(p_{\text{exo}}),
+    \qquad
+    A_t^{(\text{exo})} \sim \mathcal N(\mu_{\text{exo}},\sigma_{\text{exo}}^2).
+$$
+
+### Endogenous shocks (hazard ramps up above a symptom threshold)
+
+Endogenous shock intensity depends on the smoothed symptom level:
+
+$$
+    \lambda_{\text{endo}}(t)=\lambda_0+\lambda_1\max(0,m_{\text{slow},t}-m_{\text{crit}}),
+    \qquad
+    p_{\text{endo}}(t)=1-e^{-\lambda_{\text{endo}}(t)dt}.
+$$
+
+### Both shocks with “one shock per step”
+
+When `shock_mode="both"`, we use the total hazard
+
+$$
+  \lambda_{\text{tot}}(t)=\lambda_{\text{exo}}+\lambda_{\text{endo}}(t),
+  \qquad
+  p_{\text{tot}}(t)=1-e^{-\lambda_{\text{tot}}(t)dt},
+$$
+
+draw **at most one shock per step**, then assign its type proportional to hazard share:
+
+$$
+    \Pr(\text{endo}\mid \text{shock})=\frac{\lambda_{\text{endo}}(t)}{\lambda_{\text{tot}}(t)},
+    \qquad
+    \Pr(\text{exo}\mid \text{shock})=\frac{\lambda_{\text{exo}}}{\lambda_{\text{tot}}(t)}.
+$$
+
+If the shock is endogenous, draw $A_t^{(\text{endo})}\sim\mathcal N(\mu_{\text{endo}},\sigma_{\text{endo}}^2)$; otherwise draw $A_t^{(\text{exo})}\sim\mathcal N(\mu_{\text{exo}},\sigma_{\text{exo}}^2)$. The realized jump is $\xi_t=A_t^{(\cdot)}$.
+
+**Interpretation.** Exogenous shocks represent independent life events; endogenous shocks represent “event likelihood increases when sustained burden is high,” without introducing a separate strain state (keeps the mechanism transparent and easy to tune).
+
+
+---
+  
+# 5. Fast-layer equilibrium structure and fold thresholds
+  
+  For fixed $P$, equilibria satisfy:
+
+$$
+    m = \sigma\left(\beta\left[J(m-\tfrac12)+h_0+\gamma_P P\right]\right).
+$$
+
+We compute $m^*(P)$ across a grid of $P$ to plot a bifurcation diagram:
+  
+* **solid**: stable equilibria,
+* **dashed**: unstable equilibrium (separator),
+* **bistable window**: range of $P$ with two stable branches.
+
+
+
+
+
+```{r}
+#| label: bifurcation-fastlayer
+#| include: true
+
+beta_BC   <- 2.0
+J_BC      <- 3.0     # beta*J = 6 (>4) => bistable-capable
+h0_BC     <- 0.0
+gammaP_BC <- 1.0
+
+P_grid_BC <- seq(-2, 2, length.out = 400)
+bf_BC <- cw01_bifurcation_curve(P_grid_BC, beta_BC, J_BC, h0_BC, gammaP_BC)
+bif_BC <- extract_bifurcation_info(bf_BC)
+
+cat("Bistable P-window: [",
+    round(bif_BC$P_low_fold, 3), ", ",
+    round(bif_BC$P_high_fold, 3), "]\n", sep="")
+
+plot_bifurcation_diagram(bf_BC, bif_BC,
+                         title = "Fast-layer equilibrium structure (Curie–Weiss 0/1)")
+```
+
+
+
+# 6. Scenario set used in the final story
+
+We present four scenarios:
+
+* **A ($\beta J<4$, no shocks):** monostable fast layer → smooth tracking
+* **A+Shocks ($\beta J<4$, both shocks):** shocks perturb context, but no lock-in (no competing basins)
+* **B0 ($\beta J>4$, no shocks):** bistable-capable layer; feedback + diffusion can yield rare basin entry / long episodes
+* **B+Shocks ($\beta J>4$, both shocks):** shocks can trigger basin entry and increase dwell time once in the high basin; episodes can occur in bursts (temporal clustering)
+
+Within each regime (A-family vs B-family), the fast layer is held fixed; groups differ by $P_{\text{base}}$, and shocks enter only through the slow context jump increment $\Delta \xi_t$.
+
+
+
+```{r}
+#| label: scenario-params-table-final
+#| echo: false
+#| eval: true
+
+final_params <- readRDS("res/final_params.rds")
+
+par_fast_B <- final_params$par_fast
+best_groups <- final_params$best_groups
+best_ps_B0  <- final_params$best_ps_B0
+best_bb     <- final_params$best_bb
+
+param_tbl_final <- tibble::tribble(
+  ~Scenario, ~Regime, ~`β`, ~`J`, ~`βJ`, ~`γ_P`, ~`κ`, ~`b`, ~`σ_P`, ~`m_*`, ~`P_base (low, high)`, ~`Shocks`,
+  "A",       "monostable",
+  1.0, 2.5, 2.5, 0.4, 0.30, 0.20, 0.10, 0.10,
+  "[-0.80, 0.80]",
+  "none",
+
+  "A+S",     "monostable",
+  1.0, 2.5, 2.5, 0.4, 0.30, 0.20, 0.10, 0.10,
+  "[-0.80, 0.80]",
+  "Δξ_t: both (v3); exo λ=0.010/0.025; endo λ1=0.08, mcrit=0.55; μ=0.25, sd=0.05",
+
+  "B0",      "bistable-capable",
+  par_fast_B$beta, par_fast_B$J, par_fast_B$beta*par_fast_B$J, par_fast_B$gammaP,
+  best_ps_B0$kappa, best_ps_B0$b, best_ps_B0$sigmaP, best_ps_B0$m_star,
+  paste0("[", round(best_groups$P_base[best_groups$group=="Low baseline context"],3),
+         ", ", round(best_groups$P_base[best_groups$group=="High baseline context"],3), "]"),
+  "none",
+
+  "B+S",     "bistable-capable",
+  par_fast_B$beta, par_fast_B$J, par_fast_B$beta*par_fast_B$J, par_fast_B$gammaP,
+  best_ps_B0$kappa, best_ps_B0$b, best_ps_B0$sigmaP, best_ps_B0$m_star,
+  paste0("[", round(best_groups$P_base[best_groups$group=="Low baseline context"],3),
+         ", ", round(best_groups$P_base[best_groups$group=="High baseline context"],3), "]"),
+  paste0("Δξ_t: both (v3); exo(lo,hi)=(",
+         best_bb$lambda_exo_lo,",",best_bb$lambda_exo_hi,"); ",
+         "endo λ1=",best_bb$lambda1,", mcrit=",best_bb$m_crit,
+         "; μ=",best_bb$mu,", sd≈", round(0.15*best_bb$mu,3))
+)
+
+
+kable(param_tbl_final, digits = 3, align = "lcrrrrrrrrcl") |>
+  kable_styling(full_width = TRUE,
+                bootstrap_options = c("striped","condensed","responsive")) |>
+  row_spec(0, bold = TRUE)
+```
+
+
+
+
+
+## ***Scenario A***: monostable fast layer → smooth tracking (with and without shocks)
+  
+**Goal.** Establish the control regime where the fast symptom layer has **one** stable equilibrium for each context level $P$. In this regime, changing $P_{\text{base}}$ shifts outcomes **smoothly**: there is no bistable window, no folds, and thus no basin switching in the fast layer.
+
+**Mechanism.** When $\beta J<4$, the mean-field map
+$$
+  m=\sigma\left(\beta\left[J\left(m-\tfrac12\right)+h_0+\gamma_P P\right]\right)
+$$
+has a **unique** stable fixed point $m^*(P)$ for every $P$. The slow context $P_t$ evolves under mean reversion + feedback + diffusion noise (and optionally jump shocks $\Delta \xi_t$), and the observed symptom load $m_t$ simply **tracks** the single curve $m^*(P)$ with finite-size / update noise.
+
+
+### Scenario A (no shocks)
+
+```{r}
+#| label: scenario-A
+#| include: true
+
+scen_A <- list(
+  name = "A",
+  burn_in  = 500,
+  T_steps  = 8000,
+  n_rep    = 50,
+  seed_base = 1000,
+  groups = tibble::tibble(
+    group  = c("Low baseline context", "High baseline context"),
+    P_base = c(-0.8, 0.8)
+  ),
+  par_fast = list(
+    n_nodes = 100,
+    sweeps  = 40,
+    beta    = 1.0,
+    J       = 2.5,     # βJ = 2.5 < 4  => monostable
+    h0      = 0.0,
+    gammaP  = 0.4
+  ),
+  par_slow = list(
+    dt       = 0.02,
+    kappa    = 0.30,
+    b        = 0.20,
+    m_star   = 0.10,
+    sigmaP   = 0.10,
+    lambda_m = 0.001,
+    shock_mode = "none"
+  )
+)
+
+# res_A <- run_scenario_diagnostics_v3(
+#   scenario_name = "A (βJ<4, no shocks)",
+#   par_fast   = scen_A$par_fast,
+#   par_slow   = scen_A$par_slow,
+#   P_bases    = scen_A$groups$P_base,
+#   labels     = scen_A$groups$group,
+#   T_steps    = scen_A$T_steps,
+#   n_rep      = scen_A$n_rep,
+#   seed_base  = scen_A$seed_base,
+#   burn_in    = scen_A$burn_in,
+#   parallel   = TRUE
+# )
+# 
+# saveRDS(res_A, "res/res_A_v4.rds")
+#res_A <- readRDS("res/res_A_v4.rds")
+
+```
+
+
+
+
+### Scenario A + shocks (v3: both exogenous + endogenous)
+
+This variant keeps the *same* fast layer and the same OU+feedback parameters, and adds jump increments $\Delta \xi_t$ in the slow context update. The point is to show: shocks can perturb $P_t$ and create transient excursions in $m_t$, but cannot create lock-in or tipping because the fast layer still has only one basin.
+
+```{r}
+#| label: scenario-A-shocks
+#| include: true
+
+scen_A_both <- scen_A
+scen_A_both$name <- "A+shocks"
+
+scen_A_both$par_slow <- modifyList(scen_A$par_slow, list(
+  shock_mode    = "both",
+  
+  # exogenous shocks (group-specific λ_exo set below)
+  lambda_exo    = 0.0,
+  shock_mu_exo  = 0.25,
+  shock_sd_exo  = 0.05,
+  
+  # endogenous shocks (v3 simplified: depends directly on m_slow above m_crit)
+  lambda0       = 0.00,
+  lambda1       = 0.08,
+  m_crit        = 0.55,
+  shock_mu_endo = 0.25,
+  shock_sd_endo = 0.05
+))
+
+par_slow_A_by_group <- list(
+  "Low baseline context"  = modifyList(scen_A_both$par_slow, list(lambda_exo = 0.010)),
+  "High baseline context" = modifyList(scen_A_both$par_slow, list(lambda_exo = 0.025))
+)
+
+# res_A_both <- run_scenario_diagnostics_v3(
+#   scenario_name = "A (βJ<4, both shocks)",
+#   par_fast   = scen_A$par_fast,
+#   par_slow   = par_slow_A_by_group,
+#   P_bases    = scen_A$groups$P_base,
+#   labels     = scen_A$groups$group,
+#   T_steps    = scen_A$T_steps,
+#   n_rep      = scen_A$n_rep,
+#   seed_base  = 12000,
+#   burn_in    = scen_A$burn_in,
+#   parallel   = TRUE
+# )
+# 
+# saveRDS(res_A_both, "res/res_A_both_v3.rds")
+#res_A_both <- readRDS("res/res_A_both_v3.rds")
+
+```
+
+
+
+## ***Scenario B***: bistable-capable fast layer → thresholded basin entry (with and without shocks)
+  
+**Goal.** Scenario B demonstrates what becomes possible when the fast Curie–Weiss layer is **bistable-capable** ($\beta J>4$): the system can occupy **two metastable symptom regimes** (low vs high $m$), separated by an unstable middle branch. In this regime, *small* differences in baseline context $P_{\text{base}}$, stochastic context fluctuations, and discrete shocks can determine whether a trajectory ever enters—and how long it dwells in—the high-symptom basin.
+
+We present two variants:
+  
+* **B0 (no shocks):** bistable-capable fast layer + continuous context noise only.  
+**Point:** high-$m$ episodes can occur via **noise-driven basin entry**, depending on how close $P_{\text{base}}$ is to the fold thresholds.
+
+* **B+S (both shocks):** same baseline configuration as B0, but with **rare jump shocks** $\Delta \xi_t$ in the context process.  
+**Point:** shocks can **trigger entry** into the high basin and **cluster** episodes by producing temporally concentrated perturbations to $P_t$.
+
+### Mechanism (shared across B0 and B+S)
+
+The fast layer is fixed in the bistable-capable regime:
+$$
+    m = \sigma\left(\beta\left[J\left(m-\tfrac12\right)+h_0+\gamma_P P\right]\right),
+$$
+which can yield **two stable equilibria** $m^*_{\text{low}}(P)$ and $m^*_{\text{high}}(P)$ over an intermediate context window $[P_{\text{low fold}}, P_{\text{high fold}}]$.
+
+The slow context evolves as OU + feedback + diffusion noise, optionally augmented by jumps:
+
+$$
+    P_{t+1}=P_t
+    +\Big[-\kappa(P_t-P_{\text{base}})+b(m_{\text{slow},t}-m_*)\Big]dt
+    +\sigma_P\sqrt{dt}\epsilon_t
+    +\Delta \xi_t.
+$$
+
+In **B0**, $\Delta\xi_t\equiv 0$.
+In **B+S**, $\Delta\xi_t$ is a rare-jump increment (exo + endo hazards) as defined in the shocks section.
+
+
+  
+## Parameter selection (kept explicit): two-stage grid search for B0, then B+S
+  
+  Because outcomes in the $\beta J>4$ regime depend strongly on how each group is positioned relative to the fold thresholds, we selected one representative parameterization using a reproducible two-stage grid search:
+  
+  1. **B0 grid search (no shocks):** choose group placement + ($\kappa,b,\sigma_P$) so that
+
+* the **high-baseline** group shows *intermediate* high-$m$ occupancy (not locked low or high), and
+* the **low-baseline** group remains mostly low.
+
+2. **B+S grid search (both shocks):** holding B0 fixed, tune shock hazards/magnitudes so that
+
+* the **low-baseline** group exhibits **nonzero but not saturated** high-$m$ occupancy (shocks sometimes trigger basin entry),
+* without pathological locking or excessive shock counts in the high-baseline group.
+
+Reproducibility is enforced using `L'Ecuyer-CMRG` and a deterministic seed per (group, replicate).
+
+
+
+
+```{r}
+#| label: scenario-B-grid-search
+#| include: true
+#| eval: false
+
+
+set.seed(123)
+RNGkind("L'Ecuyer-CMRG")
+plan(multisession, workers = max(1, parallel::detectCores() - 3))
+
+# deterministic seed per (scenario, group, rep)
+seed_for <- function(seed_base, scenario_id, group_id, rep_id){
+  as.integer(seed_base + 10000L*scenario_id + 100L*group_id + rep_id)
+}
+
+# --- runner (your v3) ---
+run_scenario_diagnostics_v3 <- function(
+    scenario_name,
+    par_fast,
+    par_slow,     # list (shared) OR named list by group
+    P_bases,
+    labels,
+    T_steps   = 6000,
+    n_rep     = 3,
+    seed_base = 40000,
+    burn_in   = 0,
+    parallel  = TRUE
+){
+  stopifnot(length(P_bases) == length(labels))
+  
+  get_ps <- function(label){
+    if (is.list(par_slow) && !is.null(names(par_slow)) && label %in% names(par_slow)) {
+      par_slow[[label]]
+    } else par_slow
+  }
+  
+  group_df <- tibble(group = labels, P_base = P_bases) |>
+    mutate(group_id = row_number())
+  
+  tasks <- tidyr::crossing(group_df, rep_id = seq_len(n_rep)) |>
+    mutate(seed = purrr::pmap_int(
+      list(group_id, rep_id),
+      \(g, r) seed_for(seed_base, scenario_id = 1L, group_id = g, rep_id = r)
+    ))
+  
+  run_one <- function(P_base, label, group_id, rep_id, seed_i){
+    ps <- get_ps(label)
+    
+    valid <- names(formals(simulate_slowfast_cw01_v3))
+    ps <- ps[names(ps) %in% valid]
+    
+    dt_i <- if (!is.null(ps$dt)) ps$dt else 0.02
+    ps$dt <- NULL
+    
+    fixed_names <- c("T_steps","dt","P_base","P0","m0","seed", names(par_fast))
+    ps <- ps[setdiff(names(ps), fixed_names)]
+    
+    sim <- do.call(simulate_slowfast_cw01_v3, c(
+      list(T_steps = T_steps, dt = dt_i, P_base = P_base, P0 = P_base, m0 = 0.05, seed = seed_i),
+      par_fast,
+      ps
+    ))
+    
+    sim$scenario <- scenario_name
+    sim$group    <- label
+    sim$rep      <- rep_id
+    sim$seed     <- seed_i
+    sim
+  }
+  
+  if (isTRUE(parallel)) {
+    sim_all <- furrr::future_pmap_dfr(
+      list(tasks$P_base, tasks$group, tasks$group_id, tasks$rep_id, tasks$seed),
+      run_one,
+      .options  = furrr::furrr_options(seed = TRUE),
+      .progress = TRUE
+    )
+  } else {
+    sim_all <- purrr::pmap_dfr(
+      list(tasks$P_base, tasks$group, tasks$group_id, tasks$rep_id, tasks$seed),
+      run_one
+    )
+  }
+  
+  metrics <- sim_all |>
+    filter(t > burn_in) |>
+    group_by(scenario, rep, group) |>
+    summarise(
+      mean_P = mean(P, na.rm = TRUE),
+      mean_m = mean(m, na.rm = TRUE),
+      frac_high_abs = mean(m > 0.5, na.rm = TRUE),
+      n_shock = if ("shock_any" %in% names(cur_data())) sum(shock_any == 1L, na.rm = TRUE) else NA_real_,
+      n_shock_exo  = if ("shock_exo" %in% names(cur_data())) sum(abs(shock_exo) > 0, na.rm = TRUE) else NA_real_,
+      n_shock_endo = if ("shock_endo" %in% names(cur_data())) sum(abs(shock_endo) > 0, na.rm = TRUE) else NA_real_,
+      .groups = "drop"
+    )
+  
+  metrics_summary <- metrics |>
+    group_by(scenario, group) |>
+    summarise(
+      mean_P = mean(mean_P, na.rm = TRUE),
+      mean_m = mean(mean_m, na.rm = TRUE),
+      frac_high_abs = mean(frac_high_abs, na.rm = TRUE),
+      n_shock = mean(n_shock, na.rm = TRUE),
+      n_shock_exo = mean(n_shock_exo, na.rm = TRUE),
+      n_shock_endo = mean(n_shock_endo, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  list(sim_all = sim_all, metrics = metrics, metrics_summary = metrics_summary)
+}
+
+# --- fast layer for B-family (βJ > 4) ---
+par_fast_B <- list(
+  n_nodes = 100, sweeps = 40,
+  beta = 2.0, J = 3.0,        # βJ = 6 > 4
+  h0 = 0.0, gammaP = 1.0
+)
+
+# --- compute folds from bifurcation curve ---
+P_grid <- seq(-2, 2, length.out = 400)
+bf_B   <- cw01_bifurcation_curve(P_grid, par_fast_B$beta, par_fast_B$J, par_fast_B$h0, par_fast_B$gammaP)
+
+stab_by_P <- bf_B %>% filter(stable) %>%
+  group_by(P) %>%
+  summarise(n_stable = n(), m_low=min(m), m_high=max(m), .groups="drop")
+
+bistable_window <- stab_by_P %>% filter(n_stable == 2)
+
+P_low_fold  <- if (nrow(bistable_window)>0) min(bistable_window$P) else NA_real_
+P_high_fold <- if (nrow(bistable_window)>0) max(bistable_window$P) else NA_real_
+
+# --- placement helper (offsets from folds) ---
+make_groups_B <- function(red_offset = 0.05, green_offset = 0.30){
+  tibble(
+    group  = c("Low baseline context", "High baseline context"),
+    P_base = c(P_low_fold - green_offset, P_high_fold - red_offset)
+  )
+}
+
+# --- shared slow baseline (no shocks) ---
+par_slow_shared <- list(
+  dt       = 0.02,
+  kappa    = 0.25,
+  b        = 0.25,
+  m_star   = 0.25,
+  sigmaP   = 0.05,
+  lambda_m = 0.001
+)
+
+# ---------------------------
+# Stage 1: B0 grid (no shocks)
+# ---------------------------
+T_steps_scan <- 6000
+n_rep_scan   <- 3
+burn_in_scan <- 0
+
+grid_place <- crossing(
+  green_offset = c(0.20, 0.30, 0.40),
+  red_offset   = c(0.03, 0.06, 0.10)
+) %>% mutate(tag = row_number())
+
+grid_B0 <- crossing(
+  sigmaP = c(0.02, 0.03, 0.04),
+  kappa  = c(0.20, 0.30, 0.40),
+  b      = c(0.15, 0.25, 0.35),
+  m_star = c(0.25)
+) %>% mutate(tag = row_number())
+
+score_B0 <- function(ms){
+  hi <- ms %>% filter(group=="High baseline context")
+  lo <- ms %>% filter(group=="Low baseline context")
+  if (nrow(hi)==0 || nrow(lo)==0) return(-Inf)
+  
+  red_hi   <- hi$frac_high_abs
+  green_hi <- lo$frac_high_abs
+  
+  pen_red_extreme <- abs(red_hi - 0.5) * 2
+  pen_green       <- 10 * green_hi
+  
+  1 - pen_red_extreme - pen_green
+}
+
+tasks_B0 <- crossing(
+  place_i = seq_len(nrow(grid_place)),
+  b0_i    = seq_len(nrow(grid_B0))
+) %>% mutate(task_id = row_number())
+
+run_B0_task <- function(place_i, b0_i){
+  gp <- grid_place[place_i,]
+  g0 <- grid_B0[b0_i,]
+  
+  groups <- make_groups_B(red_offset=gp$red_offset, green_offset=gp$green_offset)
+  
+  ps <- modifyList(par_slow_shared, list(
+    sigmaP = g0$sigmaP,
+    kappa  = g0$kappa,
+    b      = g0$b,
+    m_star = g0$m_star,
+    shock_mode = "none"
+  ))
+  
+  scen_id <- (place_i - 1L) * nrow(grid_B0) + b0_i
+  seed_base <- 50000 + 50L * scen_id
+  
+  res <- run_scenario_diagnostics_v3(
+    scenario_name = paste0("B0_place", gp$tag, "_b0", g0$tag),
+    par_fast  = par_fast_B,
+    par_slow  = ps,
+    P_bases   = groups$P_base,
+    labels    = groups$group,
+    T_steps   = T_steps_scan,
+    n_rep     = n_rep_scan,
+    seed_base = seed_base,
+    burn_in   = burn_in_scan,
+    parallel  = FALSE
+  )
+  
+  ms <- res$metrics_summary
+  sc <- score_B0(ms)
+  
+  tibble(
+    place_tag = gp$tag,
+    b0_tag    = g0$tag,
+    red_offset = gp$red_offset,
+    green_offset = gp$green_offset,
+    sigmaP = g0$sigmaP, kappa = g0$kappa, b = g0$b, m_star = g0$m_star,
+    score = sc,
+    red_PrHigh = ms %>% filter(group=="High baseline context") %>% pull(frac_high_abs),
+    green_PrHigh = ms %>% filter(group=="Low baseline context") %>% pull(frac_high_abs)
+  )
+}
+
+b0_table <- future_pmap_dfr(
+  list(tasks_B0$place_i, tasks_B0$b0_i),
+  run_B0_task,
+  .options = furrr_options(seed = TRUE),
+  .progress = TRUE
+)
+
+best_row <- b0_table %>% arrange(desc(score)) %>% slice(1)
+
+best_groups <- make_groups_B(
+  red_offset   = best_row$red_offset,
+  green_offset = best_row$green_offset
+)
+
+best_ps_B0 <- modifyList(par_slow_shared, list(
+  sigmaP = best_row$sigmaP,
+  kappa  = best_row$kappa,
+  b      = best_row$b,
+  m_star = best_row$m_star,
+  shock_mode = "none"
+))
+
+# ---------------------------
+# Stage 2: B+S grid (both shocks)
+# ---------------------------
+grid_Bboth <- crossing(
+  lambda_exo_lo = c(0.01, 0.02),
+  lambda_exo_hi = c(0.03, 0.05),
+  lambda1       = c(0.10, 0.15, 0.20),
+  m_crit        = c(0.60, 0.70),
+  mu            = c(0.35, 0.45, 0.60)
+) %>%
+  mutate(lambda0 = 0.0) %>%
+  mutate(tag = row_number())
+
+score_Bboth <- function(ms){
+  hi <- ms %>% filter(group=="High baseline context")
+  lo <- ms %>% filter(group=="Low baseline context")
+  if (nrow(hi)==0 || nrow(lo)==0) return(-Inf)
+  
+  green_hi <- lo$frac_high_abs
+  red_hi   <- hi$frac_high_abs
+  red_sh   <- hi$n_shock
+  
+  pen_redlock <- 5 * pmax(0, red_hi - 0.95)
+  pen_shocks  <- ifelse(is.na(red_sh), 0, 0.10 * pmax(0, red_sh - 30))
+  
+  10*green_hi - pen_redlock - pen_shocks
+}
+
+run_Bboth_task <- function(i){
+  r <- grid_Bboth[i,]
+  
+  ps_lo <- modifyList(best_ps_B0, list(
+    shock_mode="both",
+    lambda_exo=r$lambda_exo_lo,
+    lambda0=r$lambda0, lambda1=r$lambda1, m_crit=r$m_crit,
+    shock_mu_exo=r$mu,  shock_sd_exo=0.15*r$mu,
+    shock_mu_endo=r$mu, shock_sd_endo=0.15*r$mu
+  ))
+  ps_hi <- modifyList(best_ps_B0, list(
+    shock_mode="both",
+    lambda_exo=r$lambda_exo_hi,
+    lambda0=r$lambda0, lambda1=r$lambda1, m_crit=r$m_crit,
+    shock_mu_exo=r$mu,  shock_sd_exo=0.15*r$mu,
+    shock_mu_endo=r$mu, shock_sd_endo=0.15*r$mu
+  ))
+  
+  par_slow_by_group <- list(
+    "Low baseline context"  = ps_lo,
+    "High baseline context" = ps_hi
+  )
+  
+  seed_base <- 70000 + 50L * i
+  
+  res <- run_scenario_diagnostics_v3(
+    scenario_name = paste0("Bboth_", r$tag),
+    par_fast  = par_fast_B,
+    par_slow  = par_slow_by_group,
+    P_bases   = best_groups$P_base,
+    labels    = best_groups$group,
+    T_steps   = T_steps_scan,
+    n_rep     = n_rep_scan,
+    seed_base = seed_base,
+    burn_in   = burn_in_scan,
+    parallel  = FALSE
+  )
+  
+  ms <- res$metrics_summary
+  sc <- score_Bboth(ms)
+  
+  tibble(
+    tag = r$tag,
+    score = sc,
+    lambda_exo_lo = r$lambda_exo_lo,
+    lambda_exo_hi = r$lambda_exo_hi,
+    lambda1 = r$lambda1,
+    m_crit  = r$m_crit,
+    mu      = r$mu,
+    green_PrHigh = ms %>% filter(group=="Low baseline context") %>% pull(frac_high_abs),
+    red_PrHigh   = ms %>% filter(group=="High baseline context") %>% pull(frac_high_abs),
+    red_Shocks   = ms %>% filter(group=="High baseline context") %>% pull(n_shock)
+  )
+}
+
+bb_table <- future_map_dfr(
+  seq_len(nrow(grid_Bboth)),
+  run_Bboth_task,
+  .options = furrr_options(seed = TRUE),
+  .progress = TRUE
+)
+
+best_bb <- bb_table %>% arrange(desc(score)) %>% slice(1)
+
+# save final selection for reuse
+dir.create("res", showWarnings = FALSE, recursive = TRUE)
+final_params <- list(
+  timestamp    = Sys.time(),
+  par_fast     = par_fast_B,
+  best_row_B0  = best_row,
+  best_groups  = best_groups,
+  best_ps_B0   = best_ps_B0,
+  best_bb      = best_bb
+)
+saveRDS(final_params, "res/final_params.rds")
+```
+
+
+  
+## Final B0 and B+S simulations (using selected parameters)
+  
+  Using the selected parameter set, we simulate longer trajectories and visualize (i) time series in $P(t)$ and $m(t)$ and (ii) the trajectory projected onto the bifurcation diagram.
+
+```{r}
+#| label: scenario-B-run-final
+#| include: true
+
+
+final_params <- readRDS("res/final_params.rds")
+
+par_fast_B    <- final_params$par_fast
+best_groups   <- final_params$best_groups
+best_ps_B0    <- final_params$best_ps_B0
+best_bb       <- final_params$best_bb
+
+# helper to build B+S slow params by group
+make_ps_both <- function(best_ps, best_bb_row, which_group = c("lo","hi")){
+  which_group <- match.arg(which_group)
+  lambda_exo <- if (which_group=="lo") best_bb_row$lambda_exo_lo else best_bb_row$lambda_exo_hi
+  
+  modifyList(best_ps, list(
+    shock_mode    = "both",
+    lambda_exo    = lambda_exo,
+    lambda0       = 0.0,
+    lambda1       = best_bb_row$lambda1,
+    m_crit        = best_bb_row$m_crit,
+    shock_mu_exo  = best_bb_row$mu,
+    shock_sd_exo  = 0.15 * best_bb_row$mu,
+    shock_mu_endo = best_bb_row$mu,
+    shock_sd_endo = 0.15 * best_bb_row$mu
+  ))
+}
+
+
+T_final    <- 8000
+nrep_final <- 50
+burn_final <- 500
+
+# palette
+pal <- c("Low baseline context"  = "#7ABD7D",
+         "High baseline context" = "#FF5733")
+
+# ---- B0 ----
+# res_B0 <- run_scenario_diagnostics_v3(
+#   scenario_name = "B0_final",
+#   par_fast  = par_fast_B,
+#   par_slow  = best_ps_B0,
+#   P_bases   = best_groups$P_base,
+#   labels    = best_groups$group,
+#   T_steps   = T_final,
+#   n_rep     = nrep_final,
+#   seed_base = 90000,
+#   burn_in   = burn_final,
+#   parallel  = TRUE
+# )
+
+#res_B0 <- readRDS("res/res_B0_bestparm.rds")
+
+# ---- B+S ----
+ps_lo <- make_ps_both(best_ps_B0, best_bb, "lo")
+ps_hi <- make_ps_both(best_ps_B0, best_bb, "hi")
+par_slow_Bboth <- list("Low baseline context" = ps_lo,
+                       "High baseline context" = ps_hi)
+
+# res_Bboth <- run_scenario_diagnostics_v3(
+#   scenario_name = "Bboth_final",
+#   par_fast  = par_fast_B,
+#   par_slow  = par_slow_Bboth,
+#   P_bases   = best_groups$P_base,
+#   labels    = best_groups$group,
+#   T_steps   = T_final,
+#   n_rep     = nrep_final,
+#   seed_base = 91000,
+#   burn_in   = burn_final,
+#   parallel  = TRUE
+# )
+
+#res_Bboth <- readRDS("res/res_Bboth_bestparm.rds")
+```
+
+
+
+```{r}
+
+```
+
+
+
+
+
+
+## Results: Scenario A vs Scenario B (representative trajectories + equilibrium overlays)
+
+```{r}
+#| label: results-A-B-representative
+#| include: true
+#| fig-width: 12
+#| fig-height: 9
+
+
+
+# ---- palette (final plotting labels) ----
+pal <- c("Low baseline context"="#7ABD7D", "High baseline context"="#FF5733")
+
+# ---- robust relabeling: adapt if your saved objects use "Lower/Higher" ----
+group_recode <- c(
+  "Lower baseline context" = "Low baseline context",
+  "Higher baseline context"= "High baseline context",
+  "Low baseline context"   = "Low baseline context",
+  "High baseline context"  = "High baseline context"
+)
+
+burnin <- 500
+
+# ---------- load results objects ----------
+res_A      <- readRDS("res_clean/res_A_clean.rds")
+res_A_S    <- readRDS("res_clean/res_AS_clean.rds")
+res_B0     <- readRDS("res_clean/res_B0_clean.rds")
+res_B_S    <- readRDS("res_clean/res_BS_clean.rds")
+```
+
+
+```{r}
+#| label: results-A-B-helpers
+#| include: true
+
+pick_representative_reps <- function(metrics_df){
+  stopifnot(all(c("group","rep","mean_m") %in% names(metrics_df)))
+
+  # If "scenario" exists, pick within (scenario, group); else just group
+  grp_vars <- intersect(c("scenario","group"), names(metrics_df))
+
+  metrics_df %>%
+    group_by(across(all_of(grp_vars))) %>%
+    mutate(target = mean(mean_m, na.rm = TRUE)) %>%
+    slice_min(abs(mean_m - target), n = 1, with_ties = FALSE) %>%
+    ungroup() %>%
+    select(any_of("scenario"), group, rep)
+}
+
+get_rep_sim <- function(res_obj){
+  reps <- pick_representative_reps(res_obj$metrics)
+
+  sim_rep <- res_obj$sim_all %>%
+    inner_join(reps, by = intersect(names(reps), names(res_obj$sim_all))) %>%
+    mutate(group = recode(group, !!!group_recode),
+           group = factor(group, levels = names(pal)))
+
+  sim_rep
+}
+
+sim_A_rep  <- get_rep_sim(res_A)
+sim_AS_rep <- get_rep_sim(res_A_S)
+sim_B0_rep <- get_rep_sim(res_B0)
+sim_BS_rep <- get_rep_sim(res_B_S)
+
+```
+
+
+```{r}
+#| label: results-A-B-representative-ts
+#| include: true
+#| fig-width: 14
+#| fig-height: 10
+
+p_ts_A <- plot_timeseries_with_folds(
+  sim_df   = sim_A_rep,
+  folds    = res_A$bif_info,
+  title    = "Scenario A (βJ<4): representative trajectories (no shocks)",
+  burn_in  = burnin,
+  show_burn = TRUE,
+  cols     = pal,
+  base_size = 14
+)
+
+p_ts_AS <- plot_timeseries_with_folds(
+  sim_df   = sim_AS_rep,
+  folds    = res_A_S$bif_info,
+  title    = "Scenario A+S (βJ<4): representative trajectories (both shocks)",
+  burn_in  = burnin,
+  show_burn = TRUE,
+  cols     = pal,
+  base_size = 14
+)
+
+p_ts_B0 <- plot_timeseries_with_folds(
+  sim_df   = sim_B0_rep,
+  folds    = res_B0$bif_info,
+  title    = "Scenario B0 (βJ>4): representative trajectories (no shocks)",
+  burn_in  = burnin,
+  show_burn = TRUE,
+  cols     = pal,
+  base_size = 14
+)
+
+p_ts_BS <- plot_timeseries_with_folds(
+  sim_df   = sim_BS_rep,
+  folds    = res_B_S$bif_info,
+  title    = "Scenario B+S (βJ>4): representative trajectories (both shocks)",
+  burn_in  = burnin,
+  show_burn = TRUE,
+  cols     = pal,
+  base_size = 14
+)
+
+
+
+
+(p_ts_A | p_ts_AS) / (p_ts_B0 | p_ts_BS) +
+  plot_layout(axis_titles = "collect")
+
+
+
+```
+
+
+
+
+```{r}
+#| label: results-A-B-representative-ov
+#| include: true
+#| fig-width: 14
+#| fig-height: 10
+
+# A is monostable -> usually no ribbon
+p_ov_A <- plot_branch_overlay(
+  bf       = res_A$bf,
+  bif_info = res_A$bif_info,
+  sim_df   = sim_A_rep,
+  title    = "A: trajectory on equilibrium mapping m*(P)",
+  burn_in  = burnin,
+  cols     = pal,
+  ribbon_alpha = 0.00,
+  max_points_per_group = 6000,
+  base_size = 14
+)
+
+p_ov_AS <- plot_branch_overlay(
+  bf       = res_A_S$bf,
+  bif_info = res_A_S$bif_info,
+  sim_df   = sim_AS_rep,
+  title    = "A+S: trajectory on equilibrium mapping m*(P)",
+  burn_in  = burnin,
+  cols     = pal,
+  ribbon_alpha = 0.00,
+  max_points_per_group = 6000,
+  base_size = 14
+)
+
+# B is bistable -> keep ribbon
+p_ov_B0 <- plot_branch_overlay(
+  bf       = res_B0$bf,
+  bif_info = res_B0$bif_info,
+  sim_df   = sim_B0_rep,
+  title    = "B0: trajectory on bifurcation diagram",
+  burn_in  = burnin,
+  cols     = pal,
+  ribbon_alpha = 0.12,
+  max_points_per_group = 6000,
+  base_size = 14
+)
+
+p_ov_BS <- plot_branch_overlay(
+  bf       = res_B_S$bf,
+  bif_info = res_B_S$bif_info,
+  sim_df   = sim_BS_rep,
+  title    = "B+S: trajectory on bifurcation diagram",
+  burn_in  = burnin,
+  cols     = pal,
+  ribbon_alpha = 0.12,
+  max_points_per_group = 6000,
+  base_size = 14
+)
+
+(p_ov_A | p_ov_AS) / (p_ov_B0 | p_ov_BS) +
+  plot_layout(axis_titles = "collect")
+
+```
+
+
+
+```{r}
+#| label: results-A-B-ensemble
+#| include: true
+#| fig-width: 12
+#| fig-height: 10
+
+extract_sim <- function(res_obj, scenario_label){
+  res_obj$sim_all %>%
+    select(any_of(c("t","group","rep","P","m"))) %>%
+    mutate(
+      scenario = scenario_label,
+      group = recode(group, !!!group_recode),
+      group = factor(group, levels = names(pal))
+    )
+}
+
+res_list <- list(
+  "A (βJ<4) no shocks"   = res_A,
+  "A (βJ<4) both shocks" = res_A_S,
+  "B0 (βJ>4) no shocks"  = res_B0,
+  "B (βJ>4) both shocks" = res_B_S
+)
+
+sim_ens <- imap_dfr(res_list, extract_sim) %>% filter(t > burnin)
+
+long_ens <- sim_ens %>%
+  pivot_longer(c(m, P), names_to = "var_code", values_to = "value")
+
+summ_ens <- long_ens %>%
+  group_by(scenario, group, var_code, t) %>%
+  summarise(
+    mu  = mean(value, na.rm = TRUE),
+    q10 = quantile(value, 0.10, na.rm = TRUE),
+    q90 = quantile(value, 0.90, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+build_col <- function(var_keep = c("m","P"), ylim = NULL, title = NULL){
+  var_keep <- match.arg(var_keep)
+
+  dat  <- long_ens %>% filter(var_code == var_keep)
+  summ <- summ_ens %>% filter(var_code == var_keep)
+
+  ggplot(dat, aes(t, value, color = group)) +
+    geom_ribbon(
+      data = summ,
+      aes(x = t, ymin = q10, ymax = q90, fill = group, group = group),
+      inherit.aes = FALSE,
+      alpha = 0.12
+    ) +
+    geom_line(aes(group = interaction(rep, group)),
+              alpha = 0.06, linewidth = 0.25) +
+    geom_line(data = summ, aes(y = mu, group = group),
+              linewidth = 0.9) +
+    facet_grid(rows = vars(scenario), scales = "fixed") +
+    scale_color_manual(values = pal) +
+    scale_fill_manual(values = pal) +
+    labs(x = "Time step", y = NULL, title = title, color = NULL, fill = NULL) +
+    theme_bw(base_size = 12) +
+    theme(
+      legend.position = "bottom",
+      strip.background = element_blank(),
+      panel.grid.minor = element_blank(),
+      plot.title = element_text(hjust = 0.5)
+    ) +
+    { if (!is.null(ylim)) coord_cartesian(ylim = ylim) }
+}
+
+p_m <- build_col("m", ylim = c(0,1), title = "Mean symptoms  m(t)")
+p_P <- build_col("P", ylim = NULL,  title = "Context  P(t)")
+
+(p_m | p_P) + plot_layout(guides = "collect", axis_titles = "collect") &
+  theme(legend.position = "bottom")
+
+```
+
+
+## Interpretation
+
+**A (no shocks; $\beta J<4$).** The fast layer has a *single* stable equilibrium $m^*(P)$ for every context level $P$. Group differences in $P_{\text{base}}$ therefore translate into **smooth** differences in symptom means. Noise and finite-size fluctuations broaden the trajectories around the same equilibrium curve, but there is **no branch switching** because there are no competing basins.
+
+**A+S (both shocks; $\beta J<4$).** Adding jump shocks $\Delta \xi_t$ produces **abrupt excursions** in context $P_t$, visible as synchronized perturbations in $m_t$. However, because the fast layer remains monostable, these events do **not** create hysteresis or lock-in: symptoms relax back toward the same single-valued mapping $m^*(P)$ once $P_t$ reverts.
+
+**B0 (no shocks; $\beta J>4$).** The fast layer is bistable-capable: over a finite window of (P), there are **two** stable symptom regimes separated by an unstable middle branch. With groups positioned near the fold thresholds, diffusion noise in $P_t$ can occasionally push the high-baseline group across a fold, producing **rare basin entry** into a high-$m$ episode, while the low-baseline group remains predominantly on the low branch.
+
+**B+S (both shocks; $\beta J>4$).** Jump shocks $\Delta \xi_t$ increase the probability of **threshold-crossing context excursions**, making basin entry more frequent and often **temporally clustered** (several high-$m$ episodes occurring close in time). Importantly, shocks act only on the **slow context process**; the within-layer coupling $J$ is unchanged. In this regime, shocks operate as exogenous/endogenous **triggers** that help trajectories cross folds in an otherwise metastable bistable system.
+
+
+
+
+::: {.callout-tip collapse="true" title="Measures"}
+
+## What ***Pr(high)***, ***Switches***, and ***MeanHighDur*** mean
+    
+These three maps come from the *same* simulated time series $m(t)$, after burn-in, for each grid cell.
+  
+### 1) ***Pr_high***
+  
+This is the **fraction of time** the system is in the *high-symptom* state.
+  
+In practice it’s computed like:
+    
+* define a binary indicator (high vs low) at each time step, typically using either:
+    
+  * **threshold**: high if $m(t) > 0.5$, OR
+  * **branch assignment**: high if the point is closer to the *high stable branch* of $m^*(P)$ (your bifurcation-based labeling).
+  
+  Then
+  
+$$
+\text{Pr\_high} = \frac{1}{T'}\sum_{t>\text{burnin}} \mathbf{1}{ \text{high}(t)},
+$$
+where $T'$ is the number of time steps after burn-in.
+
+So:
+
+* $\text{Pr\_high} \approx 0$ → almost always low symptoms
+* $\text{Pr\_high} \approx 1$ → almost always high symptoms
+* $\text{Pr\_high} \approx 0.5$ → spending comparable time in both (often due to switching)
+
+That contour you draw at **0.5** is the empirical “boundary” where high vs low is equally prevalent.
+
+---
+
+### 2) ***Switches***
+
+This is the **number of times** the trajectory jumps between low and high.
+
+If $z(t)\in{0,1}$ is your low/high label:
+
+$$
+\text{Switches} = \sum_{t>\text{burnin}} \mathbf{1}{z(t)\neq z(t-1)}.
+$$
+
+So:
+
+* Switches ≈ 0 → the system stayed in one regime (low or high)
+* Switches large → lots of regime changes (episodic dynamics)
+
+---
+
+### 3) ***MeanHighDur***
+
+This is the **average length of a high episode**.
+
+Algorithmically:
+
+1. find contiguous runs where $z(t)=1$,
+2. measure each run length,
+3. take the mean.
+
+So:
+
+* small MeanHighDur + high Switches → many short high episodes
+* large MeanHighDur + low Switches → rare but persistent “stuck high” episodes
+
+:::
+
+
+```{r}
+#| label: heatmaps-hyst2-noshock
+#| include: true
+#| fig-width: 13
+#| fig-height: 9
+
+library(dplyr)
+library(ggplot2)
+library(patchwork)
+
+# ---- load saved grid results ----
+heat_zoom <- readRDS("res_clean/heat_zoom_noshock_hyst2.rds")
+
+# ---- sanity checks ----
+req <- c("betaJ","P_base","Pr_high","Switches","MeanHighDur")
+stopifnot(all(req %in% names(heat_zoom)))
+
+# ensure numeric + ordered axes (nice tiles)
+heat_zoom <- heat_zoom %>%
+  mutate(
+    betaJ  = as.numeric(betaJ),
+    P_base = as.numeric(P_base)
+  )
+
+base_theme <- theme_bw(base_size = 12) +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "bottom",
+    plot.title.position = "plot"
+  )
+
+# ---- Heatmap 1: Pr(high) ----
+p_frac <- ggplot(heat_zoom, aes(x = betaJ, y = P_base, fill = Pr_high)) +
+  geom_tile() +
+  geom_contour(aes(z = Pr_high), breaks = 0.5, colour = "black", linewidth = 0.4) +
+  scale_fill_viridis_c(option = "C", limits = c(0,1)) +
+  labs(
+    title = "Occupancy of high-symptom mode",
+    x = expression(beta*J),
+    y = expression(P[base]),
+    fill = "Pr(high)"
+  ) +
+  base_theme
+
+# ---- Heatmap 2: Switch count ----
+p_sw <- ggplot(heat_zoom, aes(x = betaJ, y = P_base, fill = Switches)) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "C") +
+  labs(
+    title = "Switching frequency",
+    x = expression(beta*J),
+    y = expression(P[base]),
+    fill = "Switches"
+  ) +
+  base_theme
+
+# ---- Heatmap 3: Mean high duration ----
+p_dur <- ggplot(heat_zoom, aes(x = betaJ, y = P_base, fill = MeanHighDur)) +
+  geom_tile() +
+  scale_fill_viridis_c(option = "C") +
+  labs(
+    title = "Mean duration of high episodes",
+    x = expression(beta*J),
+    y = expression(P[base]),
+    fill = "Mean high\nduration"
+  ) +
+  base_theme
+
+# ---- Assemble figure ----
+heatmaps <- (p_frac | p_sw | p_dur) +
+  plot_annotation(
+    title = "Hysteresis heatmaps (no shocks): bistability and switching over (βJ, P_base)",
+    subtitle = "Tiles summarize replicates; contour at Pr(high)=0.5 highlights the transition boundary."
+  ) +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom")
+
+
+# ggsave("img/heatmaps.pdf",heatmaps, width=10,height=5)
+
+```
+
+
+
+### Interpretation of the heatmaps
+
+- **Left panel (Pr(high)).** For $\beta J < 4$, the fast layer is monostable, so high-state occupancy changes smoothly with $P_{\text{base}}$ and does not show a sharp coexistence region. Once $\beta J$ exceeds 4, a band of $P_{\text{base}}$ values appears where trajectories can spend substantial time on either branch; the contour $\Pr(\text{high})=0.5$ marks the rough midline of that coexistence region under the protocol.
+
+- **Middle panel (Switches).** Switching concentrates where (i) bistability exists and (ii) the baseline context places trajectories near the fold thresholds so that noise/ramping can push $P(t)$ across them. Deep inside one basin, switching is rare.
+
+- **Right panel (Mean high duration).** Mean high-episode duration tends to increase when the system enters the high basin more easily than it exits (e.g., baselines nearer the upper fold, or stronger hysteresis), consistent with dwell-time asymmetry in bistable systems.
+
+These heatmaps provide a compact “phase diagram” view: they show which combinations of fast-layer reinforcement ($\beta J$) and baseline context ($P_{\text{base}}$) place trajectories in smooth, single-regime behavior versus mixed-regime/hysteretic behavior.
+
+

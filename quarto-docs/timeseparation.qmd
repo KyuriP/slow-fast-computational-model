@@ -1,0 +1,4374 @@
+---
+title: "Slow–Fast Hybrid Model: Linking Ising Symptoms with Precarity Dynamics"
+description: |
+  This document implements and analyzes a *slow–fast hybrid system* that links a *fast Ising symptom layer* and a slow precarity process. The overall goal is to explore how fast nonlinear symptom dynamics affect the long-term evolution of slow socioeconomic precarity.
+author: 
+  - name: Kyuri Park
+    email: k.park@uva.nl
+    affiliations: 
+      - name: Computational Science Lab ![](img/csl.png){width=30%}
+date: today 
+title-block-banner: true
+format:
+  html:
+    code-fold: true
+    code-summary: "Show the code"
+    code-link: true
+    embed-resources: true
+toc: true
+toc-depth: 3
+theme: flatly
+highlight-style: github
+echo: true
+warning: false
+message: false
+---
+
+
+
+
+We are trying to study a slow-fast hybrid system that couples:
+
+- a fast 0/1 Ising-like symptom layer with mean activity $m(t) \in [0,1]$ and,
+- a slow precarity process $P(t)$ driven by mean reversion and symptom feedback.
+
+Time-scale separation lets us "freeze" $P$ and characterize the fast layer at quasi-equilibrium, then use those frozen statistics to drive the slow SDE for $P$. 
+
+The reasoning is:
+
+1. The fast variables, symptoms $S$, evolve rapidly under the influence of slowly changing $P$.
+2. Over a short interval where $P$ barely moves, $S$ relaxes to its stationary distribution for that fixed $P$.
+3. As $P$ drifts slowly, the stationary distribution of $S$ changes gradually.
+4. The fast system *tracks* that changing equilibrium --> hence "quasi-equilibrium". 
+
+**Goal**: Replace a coupled fast-slow system by a reduced model where the slow variable $P(t)$ evolves using equilibrium summaries of the fast system at the current $P$.
+
+![](img/overview.png){width=90%}
+
+
+
+## 0) Setup
+
+Prepares the environment -- loads libraries and defines helper utilities like `inv_logit`.
+
+```{r}
+#| code-fold: true
+
+library(dplyr)
+library(purrr)
+library(tidyr)
+library(ggplot2)
+library(splines)
+library(tibble)
+library(mclust)
+suppressPackageStartupMessages(library(diptest))
+library(future)
+library(furrr)
+library(patchwork)
+library(IsingFit)
+library(purrr)
+
+# plotting theme
+theme_set(theme_minimal(base_size = 12))
+
+# logit fnc
+inv_logit <- function(z) 1/(1+exp(-z))
+```
+
+
+## 1) Fast layer: 0/1 Ising model 
+
+The fast subsystem models binary symptom activation, where each symptom
+$s_i(t) \in \{0,1\}$ updates according to:
+
+$$
+P(s_i = 1 \mid s_{-i}, P)
+  = \operatorname{logit}^{-1}\!\big(\beta[J \bar{s}_{-i} + \theta_0 + \gamma_P P]\big),
+$$
+
+where:
+
+- $J$: coupling strength between symptoms (mutual reinforcement),  
+- $\beta$: inverse temperature (controls determinism of updates),  
+- $\theta_0 + \gamma_P P$: external field (threshold) shifted by precarity $P$.
+
+The function `simulate_fast_toy()` runs a sequential update scheme
+(Glauber dynamics) where, at each sweep, all symptoms are updated once on average.
+After a short burn-in, it records the *mean activity*
+$$
+m_t = \frac{1}{n}\sum_i s_i(t),
+$$
+which approximates the fast layer’s stationary response at fixed precarity $P$.
+
+This layer captures fast symptom fluctuations that quickly equilibrate given the current slow precarity state.
+
+```{r}
+#' Simulate fast-layer (symptom network) dynamics at fixed precarity level
+#'
+#' This function simulates the **fast 0/1 Ising-like symptom network** 
+#' given a fixed precarity level \eqn{P}. Each node (symptom) can be inactive (0) 
+#' or active (1), and updates its state stochastically according to 
+#' the logistic activation probability determined by its neighbors’ activity 
+#' and the external field shifted by precarity.
+#'
+#' The simulation uses **Glauber dynamics** (random sequential single-node updates) 
+#' and records the mean symptom activation after a burn-in period. 
+#' The result represents the empirical mean activity trajectory 
+#' for the fast layer conditioned on \eqn{P}.
+#'
+#' @param P Numeric scalar. Fixed precarity level for which to simulate 
+#'        the fast layer (external field shift).
+#' @param n Integer. Number of symptom nodes in the network (default = 200).
+#' @param steps Integer. Number of *sweeps* to perform (default = 800).
+#'        Each sweep performs approximately \code{n} random node updates.
+#' @param beta Numeric. Inverse temperature controlling stochasticity 
+#'        (higher = more deterministic; default = 1.2).
+#' @param J Numeric. Coupling strength between symptoms 
+#'        (controls reinforcement among active nodes; default = 9.5).
+#' @param theta0 Numeric. Baseline activation threshold (default = 0.0).
+#' @param gammaP Numeric. Scaling factor for precarity’s influence on 
+#'        thresholds (default = 2.0). Effective threshold becomes 
+#'        \eqn{\theta_P = \theta_0 + \gamma_P P}.
+#' @param burn Integer. Number of initial sweeps to discard as burn-in 
+#'        before collecting samples (default = 200).
+#' @param thin Integer. Thinning interval (record every \code{thin}-th sweep 
+#'        after burn-in to reduce autocorrelation; default = 2).
+#' @param seed Optional integer. Random seed for reproducibility (default = NULL).
+#'
+#' @details
+#' The model updates nodes sequentially using the following rule:
+#' \deqn{
+#'   P(s_i = 1 \mid s_{-i}, P) 
+#'     = \operatorname{logit}^{-1}\!\big( \beta[J \bar{s}_{-i} + \theta_0 + \gamma_P P] \big),
+#' }
+#' where \eqn{\bar{s}_{-i}} is the mean activity of all other nodes.
+#' 
+#' The mean activation at sweep \eqn{t} is stored as 
+#' \eqn{m_t = \frac{1}{n}\sum_i s_i(t)}. 
+#' After burn-in and thinning, the function returns the vector 
+#' \eqn{(m_{t_1}, m_{t_2}, \dots)} representing the stationary trajectory 
+#' of average symptom activation for the given precarity level.
+#'
+#' @return A numeric vector of length approximately \code{(steps - burn)/thin}, 
+#'         giving the mean symptom activation per recorded sweep (values in [0,1]).
+#'
+#' @examples
+#' set.seed(123)
+#' out <- simulate_fast_toy(P = 0.5)
+#' plot(out, type = "l", ylab = "Mean symptom activity", xlab = "Sweep index")
+#'
+#' hist(out, breaks = 20, main = "Distribution of symptom activation at fixed P")
+#'
+#' @seealso \code{\link{frozen_stats}}, \code{\link{branches_from_fixed_points}}
+#'
+#' @export
+simulate_fast_toy <- function(P, n = 200, steps = 800, beta = 1.2, J = 9.5,
+                              theta0 = 0.0, gammaP = 2.0, burn = 200, thin = 2, seed = NULL){
+  if (!is.null(seed)) set.seed(seed)
+  
+  # initialize symptom states (mostly inactive)
+  s <- rbinom(n, 1, 0.10)
+  
+  # external field shifted by precarity
+  theta_P <- theta0 + gammaP * P
+  
+  # storage vector for mean activity
+  rec <- numeric(0)
+  
+  # main simulation loop (steps = number of sweeps)
+  for (sw in seq_len(steps)){
+    for (u in seq_len(n)){
+      # randomly select one symptom node
+      i <- sample.int(n, 1)
+      
+      # compute mean neighbor activation
+      m_nb <- (sum(s) - s[i]) / (n - 1)
+      
+      # compute activation potential
+      eta  <- J * m_nb + theta_P
+      
+      # logistic activation probability
+      p_i  <- inv_logit(beta * eta)
+      
+      # stochastic update of node i
+      s[i] <- rbinom(1, 1, pmin(pmax(p_i, 1e-6), 1 - 1e-6))
+    }
+    
+    # after burn-in, record every `thin`-th sweep
+    if (sw > burn && (sw - burn) %% thin == 0)
+      rec <- c(rec, mean(s))
+  }
+  
+  # return mean activation trajectory
+  rec
+}
+
+```
+
+
+
+## 2) Mean-field branches and frozen statistics
+
+If we ignore fluctuations and look for the average equilibrium $m^*$ at fixed $P$, the mean-field equation is:
+
+$$
+m^* = \frac{1}{1 + \exp[-\beta(J m^* + \theta_0 + \gamma_P P)]}.
+$$
+
+- If this equation has one solution → the fast system is **unimodal**.  
+- If it has three solutions (two stable, one unstable) → the system is **bistable**.
+
+We check stability via $f'(m;P)<0)$. 
+
+### Functions:
+- `fixed_points_for_P(P)` finds equilibria $m^*$ for each fixed $P$,
+  and checks their stability ($df/dm < 0$).
+- `branches_from_fixed_points(P-grid)` constructs the *low* and *high* stable branches
+  ($m_\text{low}(P)$, $m_\text{high}(P)$) and flags whether each $P$ is unimodal or bistable.
+- `frozen_stats()` runs actual fast-layer simulations for each $P$,
+  measuring switching rates between states (only when bistable):
+  $$
+  k_\uparrow(P) = \text{rate of low→high transitions}, \quad
+  k_\downarrow(P) = \text{rate of high→low transitions}.
+  $$
+Rates are computed from *dwell times* on high/low segments. 
+Then, we smooth these discrete lookups with monotone spline to obtain continuous functions.
+The output is a table connecting each $P$ with its frozen fast-layer statistics:
+$$
+\{P,\, m_\text{low},\, m_\text{high},\, k_\uparrow,\, k_\downarrow\}.
+$$
+
+These data later serve as **lookup functions** for the slow simulation.
+
+
+
+```{r}
+#| code-fold: true
+#| 
+#' Compute fixed points and bistable branches of the fast Ising layer
+#'
+#' These helper functions find the **mean-field equilibria** (fixed points) of the 
+#' fast 0/1 Ising-like subsystem for different precarity levels \eqn{P}, 
+#' classify their stability, and (optionally) estimate empirical switching rates
+#' between low- and high-activity states via direct simulation.
+#'
+#' @details
+#' The mean-field fixed point equation is:
+#' \deqn{
+#'   f(m; P) = \sigma(\beta[Jm + \theta_0 + \gamma_P P]) - m = 0,
+#' }
+#' where \eqn{\sigma(x)} is the logistic function. 
+#' Stable equilibria satisfy \eqn{f'(m; P) < 0}.
+#'
+#' The functions are structured hierarchically:
+#' \itemize{
+#'   \item \code{fixed_points_for_P()} finds all equilibria \eqn{m^\*} and their stability for a single \eqn{P}.
+#'   \item \code{branches_from_fixed_points()} loops over a grid of \eqn{P} values and constructs 
+#'         the low/high equilibrium branches.
+#'   \item \code{frozen_stats()} extends this by empirically estimating 
+#'         upward/downward switching rates \eqn{k_{\uparrow}(P), k_{\downarrow}(P)} 
+#'         from fast-layer simulations.
+#' }
+#'
+#' @param P Numeric scalar. Fixed precarity level (for \code{fixed_points_for_P()}) 
+#'           or vector of precarity levels (for \code{branches_from_fixed_points()} / \code{frozen_stats()}).
+#' @param P_grid Numeric vector of precarity levels (for branch/summary functions).
+#' @param beta Numeric. Inverse temperature controlling stochasticity (default = 1.2).
+#' @param J Numeric. Coupling strength between symptoms (default = 9.5).
+#' @param theta0 Numeric. Baseline activation threshold (default = 0.0).
+#' @param gammaP Numeric. Strength of precarity's effect on thresholds (default = 2.0).
+#' @param steps Integer. Number of sweeps for fast-layer simulation (default = 800).
+#' @param thin Integer. Thinning interval for fast-layer simulation (default = 2).
+#' @param seed Integer. Random seed (default = 1).
+#'
+#' @return
+#' \describe{
+#'   \item{\code{fixed_points_for_P()}}{Data frame with columns:
+#'     \code{m} (equilibrium value) and \code{stable} (TRUE/FALSE).}
+#'   \item{\code{branches_from_fixed_points()}}{Data frame of \eqn{P}, 
+#'     \code{m_low}, \code{m_high}, and \code{unimodal} flags.}
+#'   \item{\code{frozen_stats()}}{Same as above, with estimated 
+#'     switching rates \code{k_up} and \code{k_down}.}
+#' }
+#'
+#' @examples
+#' # 1) Single-P equilibrium analysis
+#' fixed_points_for_P(P = 0)
+#'
+#' # 2) Full branch structure
+#' P_grid <- seq(-2, 2, length.out = 41)
+#' br <- branches_from_fixed_points(P_grid)
+#' plot(br$P, br$m_low, type='l'); lines(br$P, br$m_high, col='red')
+#'
+#' # 3) Extended frozen stats with empirical rates
+#' frozen_stats(seq(-1, 1, length.out=11))
+#'
+#' @export
+fixed_points_for_P <- function(P, beta=1.2, J=9.5, theta0=0, gammaP=2.0){
+  
+  # Define the mean-field self-consistency function f(m) = logistic(...) - m
+  f  <- function(m)
+    1/(1 + exp(-beta * (J * m + theta0 + gammaP * P))) - m
+  
+  # Derivative of f(m) with respect to m, used for stability check
+  df <- function(m){
+    p <- 1/(1 + exp(-beta * (J * m + theta0 + gammaP * P)))
+    beta * J * p * (1 - p) - 1
+  }
+  
+  # Evaluate f(m) over a dense grid to detect zero crossings
+  grid <- seq(0, 1, length.out = 501)
+  y <- f(grid)
+  cand <- which(diff(sign(y)) != 0)  # indices where f changes sign (potential roots)
+  
+  # Refine each candidate interval using uniroot() for precise root location
+  roots <- c()
+  for (k in cand){
+    r <- try(uniroot(f, c(grid[k], grid[k+1]))$root, silent = TRUE)
+    if (!inherits(r, "try-error")) roots <- c(roots, r)
+  }
+  
+  # Clean up duplicates and sort the unique roots
+  roots <- sort(unique(round(roots, 6)))
+  
+  # Return a data frame of roots and stability classification (df<0 ⇒ stable)
+  data.frame(m = roots, stable = (df(roots) < 0))
+}
+
+
+#' @rdname fixed_points_for_P
+#' @export
+branches_from_fixed_points <- function(P_grid, beta=1.2, J=9.5, theta0=0, gammaP=2.0){
+  
+  # Apply fixed_points_for_P() to each P in the grid, combine results
+  do.call(rbind, lapply(P_grid, function(P){
+    fps <- fixed_points_for_P(P, beta, J, theta0, gammaP)  # equilibria for this P
+    
+    # keep only stable equilibria
+    stab <- fps[fps$stable, , drop = FALSE]
+    
+    # summarize for this P
+    if (nrow(stab) == 0) {
+      data.frame(P = P, unimodal = NA, m_low = NA_real_, m_high = NA_real_)
+    } else if (nrow(stab) == 1) {
+      if (stab$m[1] < 0.5) {
+        data.frame(P = P, unimodal = TRUE, m_low = stab$m[1], m_high = NA_real_)
+      } else {
+        data.frame(P = P, unimodal = TRUE, m_low = NA_real_, m_high = stab$m[1])
+      }
+    } else {
+      data.frame(P = P, unimodal = FALSE,
+                 m_low = min(stab$m), m_high = max(stab$m))
+    }
+  }))
+}
+
+
+#' @rdname fixed_points_for_P
+#' @export
+frozen_stats <- function(P_grid, steps = 800, thin = 2, seed = 1,
+                         beta=1.2, J=9.5, theta0=0, gammaP=2.0){
+  
+  # Compute static bifurcation branches across P
+  br <- branches_from_fixed_points(P_grid, beta, J, theta0, gammaP)
+  
+  # Initialize placeholders for empirical switching rates
+  br$k_up   <- 0
+  br$k_down <- 0
+  
+  # Identify which P values are bistable
+  bi_idx <- which(br$unimodal == FALSE)
+  
+  # Loop over bistable P values to estimate k_up and k_down via simulation
+  if (length(bi_idx)){
+    for (ii in bi_idx){
+      P <- br$P[ii]
+      
+      # Simulate fast-layer dynamics for fixed P
+      x <- tryCatch(
+        simulate_fast_toy(P, steps = steps, thin = thin,
+                          seed = seed + round(1000 * P),
+                          beta = beta, J = J, theta0 = theta0, gammaP = gammaP),
+        error = function(e) NA_real_
+      )
+      
+      # proceed only if we have enough valid samples
+      if (length(x) >= 30 && all(is.finite(x))){
+        
+        # threshold halfway between low and high equilibria
+        thr <- mean(c(br$m_low[ii], br$m_high[ii]))
+        
+        # label time points as low (0) or high (1) branch
+        labs <- as.integer(x >= thr)
+        
+        # run-length encoding of branch occupancy to get dwell times
+        r <- rle(labs)
+        low_dw  <- r$lengths[r$values == 0]
+        high_dw <- r$lengths[r$values == 1]
+        
+        # upward and downward transition rates = inverse mean dwell time
+        br$k_up[ii]   <- if (length(low_dw))  1 / mean(low_dw)  else 0
+        br$k_down[ii] <- if (length(high_dw)) 1 / mean(high_dw) else 0
+      }
+    }
+  }
+  
+  # Return as tibble for easy plotting and manipulation
+  tibble::as_tibble(br)
+}
+
+```
+
+
+
+## 3) Slow drift for the precarity process $P(t)$
+
+The slow subsystem describes how precarity evolves under two forces:
+
+1. Mean reversion: precarity tends to drift toward a baseline $P^*$;
+2. Symptom feedback: when symptoms are high, precarity increases further.
+
+The drift function is:
+
+$$
+\frac{dP}{dt}
+  = -\kappa(P - P^*)
+    + \beta_m (m - m^*)
+    + c_0.
+$$
+
+where:
+
+| Symbol | Meaning |
+|---------|----------|
+| $\kappa$ | mean reversion rate (pulls (P) back toward ($P^*$)) |
+| $\beta_m$ | feedback from symptom activity (pushes (P) up when symptoms exceed ($m^*$)) |
+| $m^*$ | neutral symptom baseline |
+| $c_0$ | small constant bias term (a tiny global bias; default = 0) |
+
+Implemented as `f_drift(P, m, pars)`, this provides the deterministic part of the slow SDE (stochastic differential equation).
+
+```{r}
+#' Compute deterministic drift for the slow precarity layer
+#'
+#' Defines the deterministic (mean) drift term for the slow precarity
+#' variable \eqn{P(t)} in the hybrid slow–fast system. The drift captures 
+#' both *mean reversion* toward a baseline level and *feedback* from the 
+#' fast symptom subsystem.
+#'
+#' @details
+#' The drift function implements a linear mean-reverting process with
+#' an additive push from the average symptom level \eqn{m(t)}:
+#' \deqn{
+#'   \frac{dP}{dt} = -\kappa \big(P - P^\ast\big)
+#'                    + \beta_m \big(m - m^\ast\big)
+#'                    + c_0,
+#' }
+#' where:
+#' \itemize{
+#'   \item \eqn{\kappa} controls the strength of mean reversion toward
+#'         the baseline precarity level \eqn{P^\ast};
+#'   \item \eqn{\beta_m} governs how deviations in symptom activity 
+#'         (\eqn{m - m^\ast}) affect precarity;
+#'   \item \eqn{c_0} is a constant offset term (global drift bias).
+#' }
+#'
+#' Conceptually, this defines the *slow feedback loop* in the hybrid model:
+#'
+#' \preformatted{
+#'      +---------------------+
+#'      |                     |
+#'      |     symptoms (m)    |
+#'      |          ↑          |
+#'      |          |          |
+#'      |          | (Γ, B)   |
+#'      ↓          |          ↓
+#'   precarity (P) -----> thresholds -----> symptoms
+#'          ↑                (fast)
+#'          |
+#'   mean reversion (κ)
+#' }
+#'
+#' The fast symptom layer depends on current \eqn{P}, 
+#' while the slow precarity layer evolves based on the mean symptom 
+#' activity \eqn{m}, with separate timescales for the two subsystems.
+#'
+#' @param P Numeric scalar. Current precarity value.
+#' @param m Numeric scalar. Current mean symptom activation (0–1).
+#' @param pars Optional list of parameter overrides. Recognized names:
+#'   \describe{
+#'     \item{\code{kappa}}{Mean reversion strength (default 0.25).}
+#'     \item{\code{beta_m}}{Symptom feedback strength (default 1.0).}
+#'     \item{\code{P_star}}{Baseline precarity level \eqn{P^\ast} (default 0.0).}
+#'     \item{\code{m_star}}{Baseline symptom level \eqn{m^\ast} (default 0.30).}
+#'     \item{\code{c0}}{Constant drift offset (default 0.0).}
+#'   }
+#'
+#' @return
+#' Numeric value giving the deterministic drift \eqn{f_{\text{drift}}(P, m)} 
+#' — the expected change in precarity per unit time before stochastic noise.
+#'
+#' @examples
+#' # Default drift (mean reversion + symptom feedback)
+#' f_drift(P = 0.5, m = 0.8)
+#'
+#' # Weaker mean reversion, stronger feedback
+#' f_drift(P = 0.5, m = 0.8, pars = list(kappa = 0.1, beta_m = 2.0))
+#'
+#' # Visualize drift direction for a range of P and m
+#' curve(f_drift(P = x, m = 0.3), from = -1, to = 1,
+#'       ylab = "f_drift(P, m)", xlab = "P")
+#'
+#' @export
+f_drift <- function(P, m, pars = NULL) {
+  defaults <- list(
+    kappa = 0.25,  # mean reversion toward P*
+    beta_m = 1.0,  # symptom push strength
+    P_star = 0.0,  # target P (center)
+    m_star = 0.30, # symptom baseline
+    c0 = 0.0       # offset
+  )
+  if (!is.null(pars)) defaults[names(pars)] <- pars
+  with(defaults, {
+    -kappa * (P - P_star) + beta_m * (m - m_star) + c0
+  })
+}
+
+```
+
+
+## 4) Reduced models for the slow dynamics
+
+### 4.1 Unimodal reduction
+
+Assumes the fast subsystem has a single equilibrium branch $m(P)$.
+When the fast layer is unimodal, we plug ($m(P)$) directly into the slow SDE:
+$$
+dP_t = f_{\text{drift}}(P_t, m(P_t)),dt + \sigma,dW_t.
+$$
+
+Here ($m(P)$) is the smoothed branch (from freezing). `simulate_P_unimodal(...)` integrates this with Euler–Maruyama. 
+
+
+
+
+### 4.2 Hybrid reduction
+
+In the bistable regime, the fast subsystem is represented by a *two-state process*:
+
+$$
+X_t \in \{0,1\} \quad\text{(low/high symptom regime)},
+$$
+
+with switching probabilities:
+
+$$
+\Pr[X_{t+dt}=1|X_t=0] = k_\uparrow(P_t)\,dt, \quad
+\Pr[X_{t+dt}=0|X_t=1] = k_\downarrow(P_t)\,dt.
+$$
+
+::: {.callout-note}
+### Why the $dt$ in the switching probability?
+That’s how *continuous-time Poisson processes* are simulated: the chance of one jump in a tiny interval is “rate × length of the interval” $(k,dt)$.
+:::
+
+The slow SDE becomes
+$$
+dP_t = f_{\text{drift}}\big(P_t, m_{X_t}(P_t)\big),dt + \sigma,dW_t,
+$$
+where $m_0=m_{\text{low}}$ and $m_1=m_{\text{high}}$. Implemented in `simulate_P_hybrid(...)`. 
+
+
+
+```{r}
+#' Simulate slow precarity dynamics under reduced slow–fast coupling
+#'
+#' These functions simulate the **slow precarity process** \eqn{P(t)} using
+#' the reduced dynamics derived from the fast–slow hybrid model. The fast
+#' Ising symptom layer is replaced by its *average response* (expected
+#' symptom level \eqn{m(P)}) or by a *bistable hybrid approximation* with
+#' stochastic regime switching.
+#'
+#' @details
+#' ### 1) Unimodal model
+#' The \code{simulate_P_unimodal()} function assumes the fast layer has a
+#' single smooth equilibrium branch \eqn{m(P)}. Precarity evolves according
+#' to a stochastic differential equation (SDE):
+#' \deqn{
+#'   dP_t = f_{\text{drift}}(P_t, m(P_t))\,dt
+#'          + \sigma\, dW_t,
+#' }
+#' where \eqn{f_{\text{drift}}} is defined by \code{\link{f_drift}} and
+#' \eqn{W_t} is standard Brownian motion.
+#'
+#' ### 2) Hybrid (bistable) model
+#' The \code{simulate_P_hybrid()} function represents the fast layer as a
+#' **two-state metastable process** (low vs. high symptom regimes) that
+#' switches randomly with rates \eqn{k_\uparrow(P)} and
+#' \eqn{k_\downarrow(P)}:
+#' \deqn{
+#'   \Pr[X_{t+dt}=1|X_t=0] \approx k_\uparrow(P_t)\,dt, \qquad
+#'   \Pr[X_{t+dt}=0|X_t=1] \approx k_\downarrow(P_t)\,dt.
+#' }
+#'
+#' The slow variable then evolves as:
+#' \deqn{
+#'   dP_t = f_{\text{drift}}(P_t, m_{X_t}(P_t))\,dt
+#'          + \sigma\, dW_t,
+#' }
+#' where \eqn{m_0(P)} and \eqn{m_1(P)} correspond to the low and high
+#' symptom branches of the fast subsystem.
+#'
+#' These reduced models allow studying how slow dynamics behave once
+#' the fast subsystem has been averaged out or represented by a
+#' coarse-grained metastate.
+#'
+#' @param P0 Numeric. Initial value of precarity \eqn{P(0)}.
+#' @param T Numeric. Total simulation duration (default = 2000).
+#' @param dt Numeric. Integration time step (default = 0.2).
+#' @param sigma Numeric. Noise amplitude (standard deviation of Gaussian shocks).
+#' @param m_fun Function returning mean symptom activation given \eqn{P}.
+#'              Used only in \code{simulate_P_unimodal()}.
+#' @param drift_pars List of parameters passed to \code{\link{f_drift}}.
+#' @param m_low,m_high Functions giving mean symptom levels for the
+#'        low and high metastable branches, respectively.
+#' @param k_up,k_down Functions giving upward and downward switching
+#'        rates as a function of \eqn{P}.
+#' @param x0 Integer (0 or 1). Initial metastate for the hybrid model
+#'           (0 = low-symptom regime, 1 = high-symptom regime).
+#'
+#' @return
+#' \describe{
+#'   \item{\code{simulate_P_unimodal()}}{A \code{ts} time series of precarity values.}
+#'   \item{\code{simulate_P_hybrid()}}{A list with elements:
+#'     \describe{
+#'       \item{\code{P}}{A \code{ts} time series of precarity.}
+#'       \item{\code{X}}{Integer vector (0/1) of metastate over time.}
+#'     }}
+#' }
+#'
+#' @examples
+#' # Example unimodal simulation (smooth mean response)
+#' m_fun <- function(P) inv_logit(2*P)
+#' pu <- simulate_P_unimodal(P0 = 0, m_fun = m_fun)
+#' plot(pu, main = "P dynamics (unimodal fast layer)")
+#'
+#' # Example hybrid simulation (bistable fast layer)
+#' m_low_fun  <- function(P) 0.1 + 0.05*P
+#' m_high_fun <- function(P) 0.8 + 0.02*P
+#' k_up_fun   <- function(P) exp(-5*(P+1))
+#' k_down_fun <- function(P) exp(-5*(-P+1))
+#' ph <- simulate_P_hybrid(P0 = 0, m_low = m_low_fun, m_high = m_high_fun,
+#'                         k_up = k_up_fun, k_down = k_down_fun)
+#' plot(ph$P, main = "P dynamics (hybrid switching model)")
+#' lines(ph$X, col = "red", lwd = 2)
+#'
+#' @seealso \code{\link{f_drift}}, \code{\link{simulate_fast_toy}},
+#'          \code{\link{frozen_stats}}, \code{\link{branches_from_fixed_points}}
+#' 
+#' @export
+simulate_P_unimodal <- function(P0 = 0, T = 2000, dt = 0.2, sigma = 0.03,
+                                m_fun = NULL, drift_pars = NULL){
+  n <- ceiling(T/dt)
+  P <- numeric(n); P[1] <- P0
+  for (t in 2:n){
+    m <- m_fun(P[t-1])
+    d <- f_drift(P[t-1], m, pars = drift_pars)
+    P[t] <- P[t-1] + d*dt + sigma*sqrt(dt)*rnorm(1)
+  }
+  ts(P, deltat = dt)
+}
+
+#' @rdname simulate_P_unimodal
+#' @export
+simulate_P_hybrid <- function(P0 = 0, T = 2000, dt = 0.2, sigma = 0.03,
+                              m_low = NULL, m_high = NULL,
+                              k_up = NULL, k_down = NULL,
+                              drift_pars = NULL, x0 = 0L){
+  n <- ceiling(T/dt)
+  P <- numeric(n); P[1] <- P0
+  X <- integer(n); X[1] <- x0
+  for (t in 2:n){
+    Pup <- P[t-1]
+    if (X[t-1] == 0L && runif(1) < k_up(Pup)*dt)   X[t] <- 1L
+    else if (X[t-1] == 1L && runif(1) < k_down(Pup)*dt) X[t] <- 0L
+    else X[t] <- X[t-1]
+    m <- if (X[t] == 0L) m_low(Pup) else m_high(Pup)
+    d <- f_drift(Pup, m, pars = drift_pars)
+    P[t] <- Pup + d*dt + sigma*sqrt(dt)*rnorm(1)
+  }
+  list(P = ts(P, deltat = dt), X = X)
+}
+
+```
+
+
+## 5) Putting it together: Demo run (produces visible switching)
+
+
+1. Choose a broad (P)-grid and stronger $J,\beta$ to widen the bistable region.
+
+::: {.callout-note collapse="true"}
+### Explain Bistability Range
+
+#### 1) The mean-field equation governing the average activation $m$ at fixed $P$ is:
+
+$$
+m = \sigma\!\big(\beta [Jm + \theta_0 + \gamma_P P]\big),
+$$
+
+where:
+
+- $\sigma(x) = \frac{1}{1 + e^{-x}}$ is the logistic (sigmoid) function,  
+- $J$ is the internal coupling between symptoms,  
+- $\beta$ is the inverse temperature (controls stochasticity),  
+- $\gamma_P$  is how strongly the slow variable $P$ shifts the fast system’s thresholds.
+
+
+#### 2) Expressing equilibria as a function of $P$
+
+We can invert the mean-field equation to express the equilibrium curve $P(m)$:
+
+$$
+\boxed{
+P(m) = \frac{1}{\gamma_P}
+\left[
+\frac{1}{\beta} \ln\!\frac{m}{1 - m} - Jm - \theta_0
+\right].
+}
+$$
+
+This defines, for each $m$, which value of $P$ makes the system stationary.
+
+
+#### 3) Fold (bistability boundary) condition
+
+The system is bistable when $P(m)$ becomes *S-shaped* — that is, when it folds back on itself.
+The folds occur where the slope $dP/dm = 0$:
+
+$$
+\frac{dP}{dm} = \frac{1}{\gamma_P}
+\left[
+\frac{1}{\beta m(1 - m)} - J
+\right] = 0.
+$$
+
+Solving for $m$ gives the two fold points (low and high branches):
+
+$$
+\boxed{
+m(1 - m) = \frac{1}{\beta J}.
+}
+$$
+
+These exist only when $\beta J > 4$, which is the classical *bistability condition* for the mean-field Ising model.
+
+
+#### 4) Fold coordinates in $(m, P)$-space
+
+Plugging the fold $m$-values back into $P(m)$ gives:
+
+$$
+\boxed{
+P_{\text{fold}}(m)
+= \frac{1}{\gamma_P}
+\left[
+\frac{1}{\beta}\ln\!\frac{m}{1 - m}
+ - Jm - \theta_0
+\right].
+}
+$$
+
+These two points $P_{\text{fold}}^{\text{low}}$ and $P_{\text{fold}}^{\text{high}}$ define the *edges of the bistable region* in the slow variable $P$.
+
+
+#### 5) How each parameter affects the bistable region
+
+##### (a) Coupling $J$
+- Appears both inside the sigmoid and in the fold condition $m(1 - m) = 1 / (\beta J)$.
+- Increasing $J$ *steepens* the feedback and creates bistability.
+- It also widens the separation between the low and high $m$ branches.
+
+##### (b) Inverse temperature $\beta$
+- Multiplies all input terms in the sigmoid, scaling its slope.
+- Larger $β$ reduces noise, sharpening the transitions.
+- The product $βJ$ determines whether bistability is possible:
+  $$
+  βJ > 4 \;\Rightarrow\; \text{bistability}.
+  $$
+
+##### (c) Coupling strength to precarity $γ_P$
+- Enters *linearly* in the denominator of $P(m)$.
+- It *rescales the horizontal axis* (P-axis) of the bifurcation diagram.
+
+From the equation for the folds:
+
+$$
+\Delta P_{\text{bistable}}
+= P_{\text{fold}}^{\text{high}} - P_{\text{fold}}^{\text{low}}
+= \frac{1}{\gamma_P}
+\big(\Delta h_{\text{fold}}\big),
+$$
+where $\Delta h_{\text{fold}}$ is the width of the bistable region in the internal field $h = Jm + \theta_0$.
+
+Thus:
+$$
+\boxed{
+\text{Width in } P \;\propto\; \frac{1}{\gamma_P}.
+}
+$$
+
+So:
+- Increasing $γ_P$ **compresses** the bistable region along the $P$-axis.
+- Decreasing $γ_P$ **stretches** it (wider range of $P$ produces bistability).
+
+This is a scaling effect — $γ_P$ does *not* create bistability, it only changes the *P-range* over which it’s observed.
+
+
+6) Why we choose large $J$, $β$, and moderate $γ_P$
+
+- We pick *large $J$ and $β$* to make the fast system strongly nonlinear and ensure a clear S-shaped curve.
+- We pick *moderate $γ_P$* so that the bistable region spans a visible portion of the $P$-axis (not too compressed).
+
+:::
+
+
+2. Call `frozen_stats(P_grid, ...)` to obtain $m_{\text{low/high}}$ and $k_{\uparrow/\downarrow}$.
+3. Build the spline functions with `mk_fun(...)`.
+
+
+::: {.callout-note collapse="true"}
+#### Smooth Interpolation
+
+A *cubic Hermite spline* is a smooth interpolation that connects each pair of points with a cubic polynomial whose slope matches at both ends.
+The monotone Hermite version we use (`monoH.FC`) ensures the curve doesn’t wiggle or overshoot.
+We interpolate frozen statistics like mean symptom activity and switching rates, which should change smoothly and monotonically with precarity.
+:::
+
+
+4. Pick drift parameters $\kappa,\beta_m,P^*,m^*$ and noise $\sigma$.
+5. Run both:
+
+   * `simulate_P_unimodal(...)` (uses $m_{\text{low}}(P)$ in the demo),
+   * `simulate_P_hybrid(...)` (uses low/high branches + switching rates).
+6. Plot and compare: unimodal settles near one ($P$); hybrid shows plateau-and-jump dynamics due to regime switches.
+
+
+
+```{r}
+#' ## 5) Demo run: Reduced slow simulations with visible switching
+#'
+#' This section runs two reduced models of the slow precarity dynamics:
+#' \itemize{
+#'   \item \strong{Unimodal:} fast layer has a single stable equilibrium
+#'         \eqn{m(P)} — precarity evolves smoothly around one attractor.
+#'   \item \strong{Hybrid:} fast layer is bistable — it can switch stochastically
+#'         between low- and high-symptom branches (\eqn{m_{\text{low}}, m_{\text{high}}}),
+#'         producing intermittent jumps in precarity.
+#' }
+#'
+#' The simulation uses parameters chosen to widen the bistable region
+#' (stronger coupling and higher sensitivity), making regime switching
+#' clearly visible.
+#'
+#' @details
+#' Steps:
+#' \enumerate{
+#'   \item Generate grid of precarity values \eqn{P} for the fast-layer freezing.
+#'   \item Compute frozen statistics (mean activity and switching rates).
+#'   \item Smooth those discrete results into continuous functions
+#'         (\code{m_low_fun}, \code{m_high_fun}, \code{k_up_fun}, \code{k_down_fun}).
+#'   \item Simulate the reduced slow dynamics under both unimodal and hybrid
+#'         approximations.
+#' }
+#'
+#' @seealso \code{\link{simulate_P_unimodal}}, \code{\link{simulate_P_hybrid}},
+#'          \code{\link{frozen_stats}}, \code{\link{f_drift}}
+#'
+#' @examples
+#' # Produces visible regime switching in P(t)
+#' source("frozen_stats.R")
+#' source("simulate_P_models.R")
+#'
+#' # Run this chunk to compare unimodal vs hybrid dynamics
+#' # plot(pu, main = "Unimodal SDE")
+#' # plot(ph$P, main = "Hybrid SDE with switching")
+#'
+#' @export
+set.seed(1)  # reproducibility
+
+# ---------------------------------------------------------------------
+# 1) Compute frozen fast-layer statistics
+# ---------------------------------------------------------------------
+
+# Define grid of precarity values (broader range to capture bistability)
+P_grid <- seq(-4, 4, length.out = 41)
+
+# Estimate fast-layer equilibrium means and switching rates across P
+stats_df <- frozen_stats(
+  P_grid,
+  steps  = 800,
+  thin   = 2,
+  seed   = 1,
+  beta   = 1.5,   # stronger inverse temperature → more deterministic switching
+  J      = 11,    # stronger coupling → clearer bistability
+  theta0 = 0,
+  gammaP = 2.5    # stronger P → threshold influence
+)
+
+# ---------------------------------------------------------------------
+# 2) Helper to build smooth interpolation functions from frozen data
+# ---------------------------------------------------------------------
+#' @description Internal utility: Converts discrete (x,y) lookup data
+#'              into a continuous spline-based function for use in simulation.
+mk_fun <- function(x, y, fallback = 0){
+  keep <- is.finite(x) & is.finite(y)
+  if (sum(keep) < 3)
+    return(function(P) rep(fallback, length(P)))  # fallback if insufficient data
+  sf <- stats::splinefun(x[keep], y[keep], method = "monoH.FC")
+  function(P) as.numeric(sf(P))                   # return interpolator function
+}
+
+# ---------------------------------------------------------------------
+# 3) Construct smooth functions for mean branches and switching rates
+# ---------------------------------------------------------------------
+
+m_low_fun   <- mk_fun(stats_df$P, stats_df$m_low, 0)  # low-symptom mean
+m_high_fun  <- mk_fun(stats_df$P,
+                      ifelse(is.na(stats_df$m_high), stats_df$m_low, stats_df$m_high), 0)  # high-symptom mean
+k_up_fun    <- mk_fun(stats_df$P, stats_df$k_up, 0)    # upward switching rate
+k_down_fun  <- mk_fun(stats_df$P, stats_df$k_down, 0)  # downward switching rate
+
+# ---------------------------------------------------------------------
+# 4) Define parameters for slow drift function
+# ---------------------------------------------------------------------
+
+pars <- list(
+  kappa   = 0.1,   # weaker mean reversion (so P can wander)
+  beta_m  = 1.0,   # symptom → precarity feedback
+  P_star  = 0.0,   # central baseline precarity
+  m_star  = 0.30   # neutral symptom baseline
+)
+sigma <- 0.05       # noise amplitude (larger = stronger random shocks)
+P0    <- -2.0       # initial P near bistable region
+
+# ---------------------------------------------------------------------
+# 5) Simulate slow-layer dynamics: unimodal vs hybrid
+# ---------------------------------------------------------------------
+
+# (a) Unimodal model: single smooth equilibrium
+pu <- simulate_P_unimodal(
+  P0 = P0, T = 1200, dt = 0.2, sigma = sigma,
+  m_fun = m_low_fun, drift_pars = pars
+)
+
+# (b) Hybrid model: stochastic switching between low/high equilibria
+ph <- simulate_P_hybrid(
+  P0 = P0, T = 1200, dt = 0.2, sigma = sigma,
+  m_low = m_low_fun, m_high = m_high_fun,
+  k_up = k_up_fun, k_down = k_down_fun,
+  drift_pars = pars, x0 = 0L  # start in low-symptom regime
+)
+
+# ---------------------------------------------------------------------
+# 6) Plot trajectories for visual comparison
+# ---------------------------------------------------------------------
+
+# par(mfrow = c(2,1), mar = c(3,4,2,1))
+# plot(pu,  main = "P-only SDE (unimodal fast layer)", ylab = "Precarity P")
+# plot(ph$P, main = "Hybrid switching model (bistable fast layer)", ylab = "Precarity P")
+
+
+# # ---------------------------------------------------------------------
+# # Animated comparison of P trajectories: Unimodal vs Hybrid
+# # ---------------------------------------------------------------------
+# library(ggplot2)
+# library(gganimate)
+# library(dplyr)
+# library(tidyr)
+# 
+# # Prepare the data in long (tidy) format
+# df_anim <- tibble(
+#   time = time(pu),
+#   P_unimodal = as.numeric(pu),
+#   P_hybrid   = as.numeric(ph$P)
+# ) %>%
+#   pivot_longer(cols = c(P_unimodal, P_hybrid),
+#                names_to = "model", values_to = "P") %>%
+#   mutate(model = recode(model,
+#                         P_unimodal = "P-only SDE (unimodal fast layer)",
+#                         P_hybrid   = "Hybrid switching model (bistable fast layer)"))
+# 
+# # Create the base ggplot
+# p_anim <- ggplot(df_anim, aes(x = time, y = P, color = model)) +
+#   geom_line(linewidth = 1) +
+#   geom_point(size = 2) +
+#   labs(
+#     title = "Slow–Fast Dynamics over Time",
+#     subtitle = "Comparing unimodal vs. hybrid (bistable) precarity evolution",
+#     x = "Time", y = "Precarity (P)",
+#     color = "Model"
+#   ) +
+#   theme_minimal(base_size = 14) +
+#   theme(legend.position = "top") +
+#   scale_color_brewer(palette = "Dark2") +
+#   # Animate with gganimate
+#   transition_reveal(time)
+# 
+# # Render the animation
+# animate(p_anim, nframes = 300, fps = 20, width = 800, height = 450, renderer = gifski_renderer())
+# anim_save("P_trajectory_comparison.gif", animation = last_animation())
+# 
+# 
+# 
+# p_anim_facet <- ggplot(df_anim, aes(x = time, y = P)) +
+#   geom_line(linewidth = 1.2, color = "#0072B2") +
+#   geom_point(size = 2, color = "#D55E00") +
+#   facet_wrap(~ model, ncol = 1, scales = "free_y") +
+#   labs(
+#     title = "Precarity Trajectories under Unimodal vs. Hybrid Dynamics",
+#     x = "Time", y = "Precarity (P)"
+#   ) +
+#   theme_minimal(base_size = 14) +
+#   theme(strip.text = element_text(face = "bold", size = 13)) +
+#   transition_reveal(time)
+# 
+# animate(p_anim_facet, nframes = 300, fps = 30, width = 700, height = 600, renderer = gifski_renderer())
+# anim_save("P_trajectory_faceted.gif", animation = last_animation())
+```
+
+
+![](img/P_trajectory_comparison.gif)
+
+
+**Results:**
+
+- Unimodal $P_t$: converges to a single equilibrium (around $P \approx -3$).  
+- Hybrid $P_t$: exhibits *bistable switching* — rare transitions between
+  low-precarity (~−3) and high-precarity (~+6) states.
+
+These two plateaus correspond to the stable equilibria of the full slow–fast system.
+
+::: {.callout-tip title="Results in Detail" collapse="true"}
+
+##### Recall the slow–fast setup
+
+Our hybrid model couples:
+
+* a *fast system* — the symptom Ising layer $(m_t)$, and
+* a *slow system* — the precarity variable $(P_t)$.
+
+The equations are:
+
+$$
+m = \text{mean activation of fast layer (depends on P)}, \\
+dP_t = f_{\text{drift}}(P_t, m_t),dt + \sigma,dW_t,
+$$
+
+with drift:
+
+$$
+f_{\text{drift}}(P, m)
+= -\kappa (P - P^*) + \beta_m (m - m^*).
+$$
+
+Here:
+
+* $-\kappa (P - P^*)$ = mean reversion → pulls P back toward its “normal” baseline $P^*$ (say 0),
+* $\beta_m (m - m^*)$ = push from the fast layer → if symptoms rise above baseline $m^*$, they increase precarity.
+
+###### The unimodal case
+
+In the unimodal model, $m_t$ is a *single-valued, smooth function* of $P_t$:
+
+$$
+m_t = m_{\text{low}}(P_t).
+$$
+
+There’s only one stable equilibrium $m^*(P))$for every $P$.
+So the slow equation reduces to:
+
+$$
+\frac{dP_t}{dt} = -\kappa (P_t - P^*) + \beta_m [m_{\text{low}}(P_t) - m^*].
+$$
+
+At equilibrium, the drift term = 0:
+
+$$
+-\kappa (P^* - P_{\text{eq}}) + \beta_m [m_{\text{low}}(P_{\text{eq}}) - m^*] = 0.
+$$
+
+Solving this gives a *single fixed point* $P_{\text{eq}}$.
+
+That’s why your *unimodal* trajectory settles around *one stable level* (≈ −3).
+
+This single value is where the two forces balance:
+
+* mean reversion pulls $P$ toward baseline,
+* fast-layer feedback (via $m_{\text{low}})$ pushes it up or down slightly,
+  until they exactly cancel.
+
+So $P_t$ hovers stochastically around that equilibrium due to noise $σ$, but never switches regime — there’s only one basin of attraction.
+
+##### The *hybrid (bistable)* case
+
+In the hybrid model, the fast system can be in two distinct steady states for a given $P$:
+
+$$
+m_t \in { m_{\text{low}}(P),; m_{\text{high}}(P) }.
+$$
+
+This makes the drift term *state-dependent*:
+
+$$
+\frac{dP_t}{dt} =
+-\kappa (P_t - P^*) + \beta_m [m_X(P_t) - m^*],
+$$
+where $X_t$ = 0 (low branch) or 1 (high branch).
+
+Each branch has its own effective equilibrium for $P$:
+$$
+f_{\text{drift}}(P, m_{\text{low}}(P)) = 0
+\quad\text{and}\quad
+f_{\text{drift}}(P, m_{\text{high}}(P)) = 0.
+$$
+
+Those are the two stable fixed points you see in your simulation:
+
+* one around $P \approx -3$,
+* the other around $P \approx +6$.
+
+
+##### Why these particular numbers
+
+Let’s plug in the drift terms conceptually.
+
+At equilibrium:
+$$
+0 = -\kappa (P_{\text{eq}} - P^*) + \beta_m (m - m^*).
+$$
+
+→ Solve for $P_{\text{eq}}$:
+
+$$
+P_{\text{eq}} = P^* + \frac{\beta_m}{\kappa}(m - m^*).
+$$
+
+Now, in your parameter settings:
+
+* $P^* = 0$,
+* $\kappa = 0.1$,
+* $\beta_m = 1.0$,
+* $m^* = 0.3$,
+* and $m_{\text{low}} \approx 0.0$, $m_{\text{high}} \approx 1.0$ (from the Ising layer).
+
+Then:
+
+$$
+\begin{aligned}
+P_{\text{low}} &\approx 0 + \frac{1}{0.1}(0.0 - 0.3) = -3,\
+P_{\text{high}} &\approx 0 + \frac{1}{0.1}(1.0 - 0.3) = +7.
+\end{aligned}
+$$
+
+Exactly the two plateaus you observe:
+
+* one near −3, one near +6–7.
+
+So those aren’t random — they’re predicted directly by your drift equation and parameter values.
+
+##### Dynamics: how the switching happens
+
+When the fast layer (symptoms) flips between its two stable branches:
+
+* $m_t$ jumps from $m_{\text{low}}$ to $m_{\text{high}}$,
+* the drift term $f_{\text{drift}}$ suddenly changes sign,
+* $P_t$ then moves toward the *other* equilibrium $P_{\text{high}}$.
+
+Because the switching rates $k_\uparrow(P)$ and $k_\downarrow(P)$ are small, these transitions are *rare and abrupt* — long stable periods (plateaus) separated by quick jumps.
+
+
+
+##### Interpretation (empirical / conceptual)
+
+| Model        | Mechanism                               | Interpretation                                                  |
+| ------------ | --------------------------------------- | --------------------------------------------------------------- |
+| **Unimodal** | One stable equilibrium (low precarity)  | System self-regulates: stressors fade, symptoms stabilize.      |
+| **Hybrid**   | Two stable equilibria, rare transitions | System can lock into two regimes — “asymptomatic” vs “symptomatic”. |
+
+So empirically:
+
+* (P \approx -3) ≈ *normal, resilient* state — precarity low, symptoms inactive.
+* (P \approx +6) ≈ *crisis* state — precarity high, symptoms active.
+* The system spends long times in one regime, and only occasionally flips (e.g., after cumulative stress or strong shocks).
+
+:::
+
+
+
+## 6) Bifurcation plot (for intuition)
+
+
+Finally, we plot the bifurcation structure of the fast Ising layer:
+
+$$
+m^* = f(m^*, P),
+$$
+showing both stable branches (solid) and the unstable middle branch (dashed).
+
+The S-shaped curve reveals:
+
+- Grey band: bistable region (two stable equilibria co-exist).  
+- Left/right folds: tipping points where one equilibrium disappears.  
+- Dashed middle: unstable equilibrium separating the two basins.
+
+This diagram explains why the hybrid model shows switching and hysteresis:
+the fast layer’s bistable response to $P$ creates two attractors in the slow process.
+
+
+```{r}
+plot_bifurcation <- function(beta = 1.5, J = 11, theta0 = 0, gammaP = 2.0,
+                             P_grid = seq(-5, 0, length.out = 1000)) {
+  # --- Step 1: compute all equilibria (stable + unstable) ----------------
+  all_pts <- purrr::map_dfr(P_grid, function(P) {
+    fps <- fixed_points_for_P(P, beta, J, theta0, gammaP)
+    if (nrow(fps) == 0) return(NULL)
+    data.frame(P = P, m = fps$m, stable = fps$stable)
+  })
+
+  # --- Step 2: extract only stable branches to get low/high for shading --
+  br <- branches_from_fixed_points(P_grid, beta, J, theta0, gammaP)
+
+  # determine end of bistability (for cleaner ribbon)
+  P_cut <- max(br$P[br$unimodal == FALSE], na.rm = TRUE)
+  br$m_low[br$P > P_cut] <- NA  # stop low branch continuation
+
+  # --- Step 3: plotting ---------------------------------------------------
+  ggplot() +
+    # (a) bistable grey band
+    geom_ribbon(
+      data = dplyr::filter(br, !unimodal),
+      aes(x = P, ymin = m_low, ymax = m_high),
+      fill = "grey80", alpha = 0.4
+    ) +
+    # (b) unstable (dashed) branch
+    geom_line(
+      data = subset(all_pts, stable == FALSE),
+      aes(x = P, y = m),
+      linetype = "dashed", color = "grey50", linewidth = 0.8
+    ) +
+    # (c) stable branches
+    geom_line(
+      data = subset(all_pts, stable == TRUE & m < 0.5),
+      aes(x = P, y = m, color = "Low branch"), linewidth = 1.1
+    ) +
+    geom_line(
+      data = subset(all_pts, stable == TRUE & m >= 0.5),
+      aes(x = P, y = m, color = "High branch"), linewidth = 1.1
+    ) +
+    # --- Step 4: styling ---------------------------------------------------
+    scale_color_manual(values = c("Low branch" = "#0072B2",
+                                  "High branch" = "#D55E00")) +
+    labs(
+      title = "Bifurcation diagram of the fast Ising layer",
+      subtitle = "Grey band = bistable region; dashed line = unstable equilibria",
+      x = "Precarity level P",
+      y = "Mean symptom activation m",
+      color = NULL
+    ) +
+    theme_minimal(base_size = 13) +
+    theme(legend.position = "top")
+}
+
+plot_bifurcation()
+
+```
+
+
+## 7) Extension: Apply Slow–Fast Framework to HELIUS Data
+
+We now use the [HELIUS dataset](https://heliusstudy.nl/en/) to calibrate the model for two groups: *Dutch* and *Non-dutch*.
+
+**Goal.** Use one shared fast symptom layer (Ising mean‑field) and shared cross‑domain links (Γ:P→S, B:S→P), while allowing slow precarity baselines and drift to differ by group (Dutch vs Non‑Dutch). We then simulate $P(t)$ to show how group differences in precarity lead to different trajectories—possibly entering bistable symptom regimes when the fast layer is sufficiently nonlinear.
+<!-- - **NonSick:** participants with PHQsum = 0 (no depressive symptoms) -->
+<!-- - **Sick:** participants with PHQsum > 0 (some depressive symptoms) -->
+
+Both share the same symptom network ($W$) and cross-domain structure ($\gamma$, $B$) but differ in their baseline precarity ($\mu_p$, $\sigma_p$) and drift parameters ($\kappa$, $P^*$, $m^*$). 
+
+
+### Read & preprocess HELIUS
+
+Variables:
+
+  - Precarity: `inc_dif`, `discrim`, `hea_lit`, `soc_freq.`
+
+  - Symptoms: `anh`,`dep`,`slp`,`ene`,`app`,`glt`,`con`,`mot`,`sui.`
+
+Grouping: group = Dutch if `ethn==1`, otherwise NonDutch.
+
+Keep original raw units for precarity. Use binarized symptoms (≥1 → 1) for the fast layer.
+
+> We pool the sample to estimateW,Γ,B once, then attach group‑specific slow baselines and slow coupling.
+
+```{r}
+# --- Setup --------------------------------------------------------------------
+
+library(haven)
+library(dplyr)
+library(tibble)
+library(diptest)
+library(qgraph)
+library(IsingFit)
+library(kableExtra)
+
+helius <- read_sav("data/helius.sav")
+source("working_funcs.R")  # must include make_group_params()
+
+# Variables
+precarity_vars <- c("work_sit","inc_dif","discrim","hea_lit","soc_freq")
+symptom_vars   <- c("anh","dep","slp","ene","app","glt","con","mot","sui")
+
+# data clean up
+data <- helius %>%
+  # Select precariousness-related variables
+  # Employment Precariousness
+  dplyr::select(H1_Arbeidsparticipatie, H1_WerkSit, H1_RecentErv8, 
+                # Financial Precariousness
+                H1_InkHhMoeite, H1_RecentErv9,                      
+                # Housing Precariousness
+                veilig_2012, vrz_2012, P_HUURWON,                   
+                # Cultural Precariousness
+                H1_Discr_sumscore, H1_SBSQ_meanscore, A_BED_RU,         
+                # Social Precariousness
+                H1_RecentErv5, H1_RecentErv6, H1_RecentErv7,       
+                H1_SSQT, H1_SSQSa,                                  
+                # Depression symptoms / sum scores
+                H1_WlbvRecent1, H1_WlbvRecent2, H1_WlbvRecent3, H1_WlbvRecent4, H1_WlbvRecent5, H1_WlbvRecent6, H1_WlbvRecent7, H1_WlbvRecent_89, H1_WlbvRecent10, H1_PHQ9_sumscore,   
+                # Ethnicity
+                H1_etniciteit,
+                # Ages
+                H1_lft) %>%                                
+  # Replace missing codes with NA 
+  mutate(across(everything(), ~ na_if(.x, -9)), 
+         across(everything(), ~ na_if(.x, -1))) %>%  
+  # Remove NAs 
+  na.omit() %>%
+  # Convert all columns to numeric
+  mutate(across(everything(), as.numeric),
+         # Combine categories 5 to 10 into a single category (5-10 as one unemployed)
+         H1_WerkSit = case_when(
+           H1_WerkSit %in% c(5, 6, 7, 8, 9, 10) ~ 5,  
+           .default = H1_WerkSit  # Keep other values as they are 
+         ))  %>%
+  # Reverse the values of specific variables (reverse transformation)
+  mutate(across(c(H1_RecentErv8, H1_RecentErv9, veilig_2012, vrz_2012, 
+                  H1_SBSQ_meanscore, A_BED_RU, H1_RecentErv5, H1_RecentErv6, 
+                  H1_RecentErv7, H1_SSQT, H1_SSQSa), 
+                ~ max(.x) - .x)) 
+
+# redefine colnames
+colnames(data) <- c(
+  "emp_stat",       # H1_Arbeidsparticipatie
+  "work_sit",   # H1_WerkSit
+  "unemp12",     # H1_RecentErv8
+  "inc_dif",      # H1_InkHhMoeite
+  "fincri12",# H1_RecentErv9
+  "nb_safe",     # veilig_2012
+  "nb_res",   # vrz_2012
+  "nb_rent",         # P_HUURWON
+  "discrim",      # H1_Discr_sumscore
+  "hea_lit",       # H1_SBSQ_meanscore
+  "cul_rec",      # A_BED_RU
+  "rel_end12",   # H1_RecentErv5
+  "frd_brk12", # H1_RecentErv6
+  "conf12",         # H1_RecentErv7 ## only keeping this as the Erv5 and Erv6 are basically overlapped with this.
+  "soc_freq",      # H1_SSQT
+  "soc_adq",      # H1_SSQSa
+  "anh",       # H1_WlbvRecent1
+  "dep",       # H1_WlbvRecent2
+  "slp",       # H1_WlbvRecent3
+  "ene",       # H1_WlbvRecent4
+  "app",       # H1_WlbvRecent5
+  "glt",       # H1_WlbvRecent6
+  "con",       # H1_WlbvRecent7
+  "mot",     # H1_WlbvRecent_89
+  "sui",      # H1_WlbvRecent10
+  "PHQsum",         # H1_PHQ9_sumscore
+  "ethn",         # H1_etniciteit
+  "age"          #"H1_lft" 
+)
+
+
+# filter unnecessary columns
+data_cleaned <- data %>%
+  dplyr::select(
+    # Employment
+    work_sit, #unemp12,
+    # Financial
+    inc_dif, #fincri12,
+    # Housing
+    #nb_safe,
+    # Cultural / Discrimination
+    discrim, hea_lit,
+    # Social
+    soc_freq, #conf12, soc_adq, 
+    # Symptoms
+    anh, dep, slp, ene, app, glt, con, mot, sui,
+    # Sum score (optional)
+    PHQsum,
+    # Demographics
+    ethn, age
+  )
+
+# Reshape the data to long format
+clust_data_long <- data_cleaned |>
+  dplyr::select(-age, -ethn) |>
+  tidyr::pivot_longer(cols = everything(), names_to = "variable", values_to = "value")
+
+
+# # Your variable order
+# desired_order <- c(
+#   "anh", "dep", "slp", "ene", "app", "glt", "con", "mot", "sui", "PHQsum",  # Symptoms
+#   "work_sit", "inc_dif", "discrim", "hea_lit", "soc_freq"                   # Precarity
+# )
+# 
+# # Ensure proper factor ordering
+# clust_data_long$variable <- factor(clust_data_long$variable, levels = desired_order)
+# 
+# # Create a grouping variable for color
+# symptom_vars <- c("anh", "dep", "slp", "ene", "app", "glt", "con", "mot", "sui")
+# symptom_vars2 <- c("anh", "dep", "slp", "ene", "app", "glt", "con", "mot", "sui", "PHQsum")
+# precarity_vars <- c("inc_dif", "discrim", "hea_lit", "soc_freq", "work_sit")
+# 
+# clust_data_long <- clust_data_long %>%
+#   mutate(group = case_when(
+#     variable %in% symptom_vars2 ~ "Symptoms",
+#     variable %in% precarity_vars ~ "Precarity"
+#   ))
+
+# # Plot with color by group
+# ggplot(clust_data_long, aes(x = value, fill = group)) +
+#   geom_histogram(aes(y = after_stat(density)), color = "white", bins = 15, alpha = 0.8) +
+#   geom_density(color = "lightgray", size = 0.2, adjust = 1.2, alpha = 0.2) +
+#   facet_wrap(~ variable, scales = "free") +
+#   scale_fill_manual(values = c("Symptoms" = "deepskyblue4", "Precarity" = "darkseagreen")) +
+#   labs(x = "", y = "", fill = "") +
+#   theme_minimal() +
+#   theme(
+#     legend.position = "bottom",
+#     strip.text = element_text(face = "bold")
+#   )
+
+
+# --- Define group ---------------------------------------------------------------
+data_cleaned <- data_cleaned %>%
+  mutate(group = ifelse(ethn == 1, "Dutch", "NonDutch"),
+         group = factor(group, levels = c("Dutch", "NonDutch")))
+
+group_var <- "group"
+
+# --- Select only PHQsum + precarity variables ----------------------------------
+precarity_vars <- c("inc_dif", "discrim", "hea_lit", "soc_freq")
+slow_vars <- c("PHQsum", precarity_vars)
+
+# --- Prepare long-format data for plotting -------------------------------------
+facet_long <- data_cleaned %>%
+  dplyr::select(all_of(c(group_var, slow_vars))) %>%
+  tidyr::pivot_longer(cols = -all_of(group_var),
+                      names_to = "variable",
+                      values_to = "value")
+
+# Keep consistent order
+facet_long$variable <- factor(facet_long$variable, levels = slow_vars)
+
+
+# --- Descriptive summary table (auto reorder) ----------------------------------
+desc_table <- facet_long %>%
+  group_by(variable, .data[[group_var]]) %>%
+  summarise(
+    n = dplyr::n(),
+    Mean = round(mean(value, na.rm = TRUE), 2),
+    SD   = round(sd(value, na.rm = TRUE), 2),
+    Median = round(median(value, na.rm = TRUE), 2),
+    IQR = round(IQR(value, na.rm = TRUE), 2),
+    .groups = "drop"
+  ) %>%
+  pivot_wider(
+    names_from = .data[[group_var]],
+    values_from = c(Mean, SD, Median, IQR, n),
+    names_glue = "{.value}_{.name}"
+  ) %>%
+  arrange(variable)
+
+# --- Debug helper (optional): see actual column names ---------------------------
+# print(names(desc_table))
+
+# Automatically detect column names by pattern
+dutch_cols     <- grep("_Dutch$", names(desc_table), value = TRUE)
+nondutch_cols  <- grep("_NonDutch$", names(desc_table), value = TRUE)
+
+# Make sure the column order is: Dutch block first, then NonDutch
+desc_table <- desc_table %>%
+  relocate(variable, all_of(dutch_cols), all_of(nondutch_cols))
+
+# --- Pretty formatted table -----------------------------------------------------
+desc_table %>%
+  mutate(across(where(is.numeric), ~ sprintf("%.2f", .))) %>% 
+  kable(
+    caption = "Table 1. Descriptive summary of PHQsum and precarity variables by ethnicity (Dutch vs NonDutch).",
+    align = "lcccccccccc",
+    col.names = c(
+      "Variable",
+      "Mean", "SD", "Median", "IQR", "n",
+      "Mean", "SD", "Median", "IQR", "n"
+    )
+  ) %>%
+  kable_classic(full_width = FALSE, html_font = "Arial") %>%
+  add_header_above(c(" " = 1, "Dutch" = 5, "NonDutch" = 5))
+
+# --- Density comparison --------------------------------------------------------
+ggplot(facet_long, aes(x = value, fill = .data[[group_var]])) +
+  geom_density(alpha = 0.35, adjust = 1.1) +
+  facet_wrap(~ variable, scales = "free", ncol = 3) +
+  scale_fill_manual(values = c("Dutch" = "steelblue4", "NonDutch" = "salmon2")) +
+  labs(
+    title = "Distribution of PHQsum and precarity variables by ethnicity",
+    x = NULL, y = "Density", fill = ""
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "bottom",
+    strip.text = element_text(face = "bold")
+  )
+
+# --- Statistical tests: Dutch vs NonDutch --------------------------------------
+test <- "wilcox"  # or "t" for Welch t-test
+
+test_results <- lapply(slow_vars, function(v) {
+  frm <- as.formula(paste(v, "~", group_var))
+  if (test == "t") {
+    res <- rstatix::t_test(data_cleaned, frm, var.equal = FALSE)
+  } else {
+    res <- rstatix::wilcox_test(data_cleaned, frm)
+  }
+  res$variable <- v
+  res
+}) %>%
+  dplyr::bind_rows() %>%
+  # Create p.adj and significance labels
+  dplyr::mutate(
+    p.adj = p.adjust(p, method = "BH"),
+    signif = dplyr::case_when(
+      p.adj < 0.001 ~ "***",
+      p.adj < 0.01  ~ "**",
+      p.adj < 0.05  ~ "*",
+      TRUE ~ ""
+    ),
+    statistic = round(statistic, 2),
+    p = formatC(p, format = "e", digits = 2),
+    p.adj = formatC(p.adj, format = "e", digits = 2)
+  )
+
+# Add a 'method' column manually if it doesn't exist
+if (!"method" %in% names(test_results)) {
+  test_results$method <- ifelse(test == "t", "Welch t-test", "Wilcoxon test")
+}
+
+# Reorder and select columns safely
+test_results <- test_results %>%
+  dplyr::select(variable, method, statistic, p, p.adj, signif) %>%
+  dplyr::arrange(p.adj)
+
+# --- Display formatted table ----------------------------------------------------
+test_results %>%
+  kable(
+    caption = "Table 2. Statistical comparison of PHQsum and precarity variables between Dutch and NonDutch groups.",
+    align = "lccccc",
+    col.names = c("Variable", "Test", "Statistic", "p-value", "BH-adjusted p", "Significance")
+  ) %>%
+  kable_classic(full_width = FALSE, html_font = "Arial") %>%
+  kable_styling(position = "center")
+
+# --- Annotated boxplot comparison ----------------------------------------------
+sig_labels <- test_results %>% select(variable, signif)
+facet_long_annot <- facet_long %>%
+  left_join(sig_labels, by = "variable") %>%
+  mutate(signif = ifelse(signif == "", NA, signif))
+
+ggplot(facet_long_annot, aes(x = .data[[group_var]], y = value, fill = .data[[group_var]])) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  facet_wrap(~ variable, scales = "free", ncol = 3) +
+  geom_text(
+    data = distinct(facet_long_annot, variable, signif),
+    aes(x = 1.5, y = Inf, label = signif),
+    vjust = 1.5, size = 4, color = "black", inherit.aes = FALSE
+  ) +
+  scale_fill_manual(values = c("Dutch"="steelblue4","NonDutch"="salmon2")) +
+  labs(
+    title = "Group differences in PHQsum and precarity (Dutch vs NonDutch)",
+    x = "", y = "", fill = ""
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "bottom",
+    strip.text = element_text(face = "bold")
+  )
+
+```
+
+
+### Build a single precarity index $P$ and binary symptoms
+```{r}
+# ---- A1. pick columns ----
+X <- data_cleaned[, precarity_vars]
+Z <- scale(X)                                # column-wise z
+
+# ---- A2. PCA-1 weights (signed so "more precarity" = larger P) ----
+pc <- prcomp(Z, scale. = FALSE)
+w  <- pc$rotation[,1]                        # loadings for PC1
+# ensure positive correlation with "worse" (flip sign if needed)
+if (cor(Z %*% w, rowMeans(Z)) < 0) w <- -w
+
+P  <- as.numeric(Z %*% w)                    # scalar precarity
+
+# ---- Inspect PCA loadings (weights) ----
+loadings <- data.frame(
+  Variable = precarity_vars,
+  PC1_Loading = round(pc$rotation[,1], 3)
+) |> 
+  arrange(desc(abs(PC1_Loading)))  # sort by magnitude
+
+
+# --- Left: loadings plot ---
+p_load <- ggplot(loadings, aes(x = reorder(Variable, PC1_Loading), 
+                               y = PC1_Loading, fill = PC1_Loading > 0)) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_manual(values = c("salmon3", "steelblue"), guide = "none") +
+  labs(
+    title = "PCA Loadings for Precarity Index (PC1)",
+    x = "Precarity Variable",
+    y = "PC1 Loading"
+  ) +
+  theme_minimal(base_size = 13) +
+      theme(text = element_text(family="Palatino"))
+
+
+# --- Right: density by group ---
+data_cleaned$P <- P
+
+p_dens <- ggplot(data_cleaned, aes(x = P, fill = group)) +
+  geom_density(alpha = 0.4) +
+  labs(
+    title = "Precarity Index (PC1) by Group",
+    x = "Precarity score (P)",
+    y = "Density"
+  ) +
+  theme_minimal(base_size = 13) +
+  scale_fill_manual(values = c("salmon2", "steelblue4")) +
+  theme(text = element_text(family="Palatino"))
+
+# --- Combine side by side ---
+p_load / p_dens  
+```
+
+
+
+```{r}
+SYMPTOM_CUTOFF <- 1
+Sbin <- as.matrix(data_cleaned[, symptom_vars] >= SYMPTOM_CUTOFF) * 1L
+m_obs <- rowMeans(Sbin)  
+```
+
+
+
+### Compare the networks (NCT)
+
+```{r results='hide', cache=TRUE}
+library(bootnet)
+library(NetworkComparisonTest)
+
+### 1. Convert symptoms to binary
+data_cleaned_binary <- data_cleaned %>%
+  mutate(across(anh:sui, ~ ifelse(.x > 0, 1, 0)))
+
+### 2. Split data into groups
+dutch_dat <- data_cleaned_binary %>%
+  filter(group == "Dutch") %>%
+  select(anh:sui)
+
+nondutch_dat <- data_cleaned_binary %>%
+  filter(group == "NonDutch") %>%
+  select(anh:sui)
+
+### 3. Estimate networks (if you want to visualize them)
+network_dutch <- estimateNetwork(
+  dutch_dat,
+  default = "IsingFit"
+)
+
+network_nondutch <- estimateNetwork(
+  nondutch_dat,
+  default = "IsingFit"
+)
+
+### Visualize
+par(mfrow=c(1,2))
+qgraph(network_dutch$graph, theme="colorblind", title = "Dutch")
+qgraph(network_nondutch$graph, theme="colorblind", title = "Non Dutch")
+
+### 4. M and S statistics
+M <- max(abs(c(network_dutch$graph) - c(network_nondutch$graph)))
+cat("The biggest edge difference is:", M, "\n")
+
+S <- abs(sum(abs(c(network_dutch$graph)) -
+              abs(c(network_nondutch$graph)))) / 2
+
+cat("Strength difference between the two networks is:", S, "\n")
+
+### 5. Correct NCT usage
+set.seed(123)
+
+nct_results <- NCT(
+  data1 = dutch_dat,
+  data2 = nondutch_dat,
+  binary.data = TRUE,   # you are using binary symptoms
+  test.edges = TRUE,
+  it = 100,            # recommended minimum
+  progressbar = TRUE
+)
+
+### Show results
+summary(nct_results)
+```
+
+Although the *Network Comparison Test* (NCT) indicated that the Dutch and Non-Dutch symptom networks differ in both global strength and structure when estimated separately, our slow–fast framework treats these differences as emergent rather than fundamental. Specifically, we assume that individuals in both groups share the same microscopic symptom interaction structure, described by a single Ising weight matrix $W$ and its mean-field reduction with parameters $J_{\text{eff}}$, $θ_0$, and $γ_P$. Group differences are instead attributed to where individuals reside in the joint precarity–symptom state space, and to the feedback between the slow precarity process $P$ and the fast symptom layer $m$.
+
+
+
+### Estimate the fast-layer parameters ($J$, $\theta$, $\gamma_P$)
+
+We reduce the full Ising to a mean-field:
+
+$$ m \approx \sigma(\beta[Jm + \theta_0 + \gamma_PP]),\ \sigma(z) = \frac{1}{1+e^{-z}}  $$
+
+Estimate a full Ising network once (pooled over people), then collapse to an effective coupling. 
+
+
+#### Estimate the symptom network and $J_{\text{eff}}$
+
+We first fit an Ising model to the binary symptoms in the pooled sample, obtain the weight matrix $W$, and summarize its overall strength by the spectral radius
+$J_{\text{eff}} = \lambda_{max} (W)$
+This is a single scalar that acts like an effective coupling in the Curie–Weiss mean-field equation.
+
+```{r, results='hide', out.width="70%", fig.align='center'}
+# Fit once on pooled binary symptoms
+fit <- IsingFit(Sbin, family = "binomial", plot = FALSE)
+What <- fit$weiadj  # symmetric weights
+qgraph::qgraph(What, layout = "spring", theme = "colorblind",
+title = "Estimated Symptom Network (IsingFit)")
+
+```
+
+```{r}
+#N_sym <- 9
+# spectral J_eff
+eig_vals <- eigen(What, only.values = TRUE)$values
+J_spectral    <- max(Re(eig_vals))
+cat("Spectral radius of W (J_spectral) =", round(J_spectral, 2), "\n")
+```
+
+#### Baseline threshold $\theta_0$ 
+
+We choose the reference point ($P=0$) (centered `PC1`) and require that the mean-field model reproduces the *empirical average activation*
+  $$\bar{m}_0 = \mathbb{E}[m \mid P \approx 0].$$
+
+For simplicity, we take $\bar{m}_0$ as the overall mean of $m_{\text{obs}}$ because ($P$) has been centered.
+
+The mean-field equation at ($P=0$) is:
+$$ \bar{m}_0 = \sigma\big( \beta [J_{\text{eff}}\bar{m}_0 + \theta_0 ] \big).$$
+
+Solving for $\theta_0$ gives:
+  
+$$
+    \theta_0
+    = \frac{1}{\beta}\operatorname{logit}(\bar{m}_0) - J_{\text{eff}}\bar{m}_0,
+    \quad
+    \text{where }
+    \operatorname{logit}(p) = \log \frac{p}{1-p}.
+$$
+
+
+```{r}
+BETA  <- 1.0 # fix temperature parameter BETA to be 1 following the default setting of IsingFit()
+
+logit <- function(p) log(p/(1 - p))
+m0    <- mean(m_obs)   
+
+# empirical mean symptom activation at P≈0
+
+theta0 <- (1 / BETA) * logit(m0) - J_spectral * m0
+cat(c("theta0=", round(theta0,2)))
+```
+
+So now our calibrated mean-field model at $P=0$ reproduces the average symptom level observed in HELIUS.
+
+
+#### Estimate $\gamma_P$ from how symptoms vary with ($P$)
+  
+<!-- In the mean-field model, precarity shifts the effective field via $\gamma_P P$: -->
+
+<!-- $$ -->
+<!--     m(P) = \sigma\big( \beta [ J_{\text{eff}} m(P) + \theta_0 + \gamma_P P ] \big). -->
+<!-- $$ -->
+
+
+We estimated the coupling parameter $γₚ$ by fitting the mean-field Ising prediction
+
+$$
+    m = \sigma\big( \beta [ Jm + \theta_0 + \gamma_P P ] \big).
+$$
+
+directly to individual-level ($P_i$, $m_i$) data via nonlinear least squares. For each P-value, we computed the stable fixed point $m^*(P)$ by iterating the mean-field map until convergence, and then chose $γₚ$ to minimize the squared prediction error.
+
+
+We estimate $γₚ$ by minimizing:
+  
+$$
+    \min_{\gamma_P}\ \sum_i \big(m_i - m^*(P_i; \gamma_P)\big)^2
+$$
+
+where:
+  
+$$
+    m^*(P) = \text{stable solution of }
+    m = \sigma(\beta[J m + \theta_0 + \gamma_P P]).
+$$
+
+This is the exact mapping $P$→ $m$ predicted by the MF Ising model.
+
+```{r}
+# Define the fixed-point solver m(P)*
+mf_fixed_point <- function(P, beta, J, theta0, gammaP, m_init = 0.2) {
+  m <- m_init
+  for (iter in 1:50) {
+    m_new <- 1 / (1 + exp(-beta * (J*m + theta0 + gammaP * P)))
+    if (abs(m_new - m) < 1e-8) break
+    m <- m_new
+  }
+  return(m)
+}
+
+# Vectorized wrapper
+mf_predict_m <- function(P_vec, beta, J, theta0, gammaP) {
+  sapply(P_vec, function(P) mf_fixed_point(P, beta, J, theta0, gammaP))
+}
+
+# Nonlinear least square objective
+gamma_obj <- function(gammaP, P_vec, m_vec, beta, J, theta0) {
+  
+  # Penalize negative or huge gammaP
+  if (!is.finite(gammaP) || gammaP < 0 || gammaP > 10) return(1e6)
+  
+  m_pred <- mf_predict_m(P_vec, beta, J, theta0, gammaP)
+  
+  SSE <- sum((m_pred - m_vec)^2)
+  return(SSE)
+}
+
+
+
+## ---- fast-layer-J-grid, message=FALSE, warning=FALSE-------------------
+# Total variance in observed mean symptom level
+SST_m <- sum( (m_obs - mean(m_obs))^2 )
+
+# Grid of J values to explore
+J_grid <- seq(0.5, 6, length.out = 25)
+
+fast_grid <- map_dfr(J_grid, function(J) {
+
+  # 1) For each J, choose theta0(J) so that mean at P = 0 matches empirical m0
+  theta0_J <- (1 / BETA) * logit(m0) - J * m0
+
+  # 2) For that J, fit gamma_P(J) by minimizing SSE between m*(P) and m_obs
+  gamma_search_J <- optimize(
+    gamma_obj,
+    interval = c(0, 5),
+    P_vec    = P,
+    m_vec    = m_obs,
+    beta     = BETA,
+    J        = J,
+    theta0   = theta0_J,
+    tol      = 1e-4
+  )
+
+  gamma_hat_J <- gamma_search_J$minimum
+
+  # 3) Compute fit quality for this (J, gamma_P(J))
+  m_pred <- mf_predict_m(P, BETA, J, theta0_J, gamma_hat_J)
+  SSE    <- sum((m_pred - m_obs)^2)
+  R2     <- 1 - SSE / SST_m
+
+  tibble(
+    J           = J,
+    theta0      = theta0_J,
+    gamma_P_hat = gamma_hat_J,
+    SSE         = SSE,
+    R2          = R2
+  )
+})
+
+fast_grid
+# 
+# 
+# 
+# ## ---- fast-layer-J-grid-plots, fig.width=7, fig.height=5----------------
+# 
+# # (1) gamma_P(J)
+# ggplot(fast_grid, aes(J, gamma_P_hat)) +
+#   geom_line() + geom_point(size = 1.5) +
+#   labs(
+#     title = "P→symptom coupling gamma_P as a function of J",
+#     x     = "Assumed J_eff",
+#     y     = "Fitted gamma_P(J)"
+#   ) +
+#   theme_minimal(base_size = 13)
+# 
+# # (2) SSE(J)
+# ggplot(fast_grid, aes(J, SSE)) +
+#   geom_line() + geom_point(size = 1.5) +
+#   labs(
+#     title = "Fast-layer mean-field fit quality vs J",
+#     x     = "Assumed J_eff",
+#     y     = "SSE of m(P) mean-field fit"
+#   ) +
+#   theme_minimal(base_size = 13)
+# 
+# # (3) R^2(J)
+# ggplot(fast_grid, aes(J, R2)) +
+#   geom_line() + geom_point(size = 1.5) +
+#   labs(
+#     title = "Explained variance in m(P) vs J",
+#     x     = "Assumed J_eff",
+#     y     = "R² (explained variance in m)"
+#   ) +
+#   theme_minimal(base_size = 13)
+
+
+
+## ---- choose-Jeff-for-rest----------------------------------------------
+# Choose a working J_eff based on the J-grid diagnostics.
+# Example: J_eff = 3 gives some nonlinearity with acceptable SSE.
+J_eff <- J_spectral 
+
+# Grab the corresponding theta0 and gamma_P_hat from the grid
+row_star <- fast_grid %>%
+  arrange(abs(J - J_eff)) %>%
+  slice(1)
+
+theta0      <- row_star$theta0
+gamma_P_hat <- row_star$gamma_P_hat*3
+
+cat("Using J_eff =", round(J_eff, 3), 
+    "theta0 =", round(theta0, 3),
+    "gamma_P_hat =", round(gamma_P_hat, 3), "\n") # i rescaled gamma a bit higher
+
+
+
+# # Optimize gamma_P
+# gamma_search <- optimize(
+#   gamma_obj,
+#   interval = c(0, 5),
+#   P_vec = P,
+#   m_vec = m_obs,
+#   beta = BETA,
+#   J = J_eff,
+#   theta0 = theta0,
+#   tol = 1e-4
+# )
+# 
+# gamma_P_hat <- gamma_search$minimum 
+# cat(c("gamma_P_hat=", round(gamma_P_hat,2)))
+
+```
+
+<!-- Empirically, we see how the mean symptom activation changes with ($P$) across the sample: -->
+
+<!-- 1. Bin individuals along $P$, -->
+<!-- 2. Compute bin means $\bar{m}_b$ and $\bar{P}_b$, -->
+<!-- 3. Regress $\operatorname{logit}(\bar{m}_b)$ on $\bar{P}_b$. -->
+
+
+<!-- So,  Start with the mean-field equation: -->
+
+<!-- $$ -->
+<!--     m_b = \sigma\big( \beta [ J_{\text{eff}}m_b + \theta_0 + \gamma_P\bar P_b ] \big) -->
+<!-- $$ -->
+
+<!-- Apply logit on both sides: -->
+
+<!-- $$ -->
+<!--     \mathrm{logit}(m_b) -->
+<!--     = \beta \big[J_{\text{eff}} m_b + \theta_0 + \gamma_P\bar P_b \big] -->
+<!-- $$ -->
+
+<!-- Rearrange: -->
+
+<!-- $$ -->
+<!--     \mathrm{logit}(m_b) -->
+<!--     \approx -->
+<!--     \underbrace{\beta(J_{\text{eff}} m_b + \theta_0)}_{\text{constant-ish across bins}} -->
+<!--     + -->
+<!--     \underbrace{\beta \gamma_P}_{\text{the slope we want}} \bar P_b -->
+<!-- $$ -->
+
+<!-- Over small ranges of P, $m_b$ does not move much → the first term is roughly constant. -->
+
+<!-- Thus: -->
+
+<!-- $$ -->
+<!--     \mathrm{logit}(\bar m_b) -->
+<!--     \quad \text{has approximately linear dependence on } \bar P_b. -->
+<!-- $$ -->
+
+<!-- So, we run a regression: -->
+
+<!-- $$ -->
+<!--     y_b = \mathrm{logit}(\bar m_b) -->
+<!--     \quad\text{onto}\quad -->
+<!--     x_b = \bar P_b -->
+<!-- $$ -->
+
+
+<!-- Mean-field theory says the $slope ≈ β γₚ$, so: -->
+
+<!-- $$ -->
+<!--     \boxed{ -->
+<!--       \gamma_P \approx \frac{\text{slope}}{\beta} -->
+<!--     } -->
+<!-- $$ -->
+
+<!-- So the slope of this regression, divided by $\beta$, is a natural estimate of $\gamma_P$. -->
+
+
+<!-- ```{r} -->
+<!-- # Bin P into, say, 20 quantile bins -->
+<!-- nbins <- 30 -->
+<!-- cuts  <- quantile(P, probs = seq(0, 1, length.out = nbins + 1)) -->
+<!-- bin_id <- cut(P, breaks = cuts, include.lowest = TRUE) -->
+
+<!-- bin_df <- data_cleaned %>% -->
+<!--   mutate(P = P, m = m_obs, bin = bin_id) %>% -->
+<!--   group_by(bin) %>% -->
+<!--   summarise( -->
+<!--     P_bar   = mean(P), -->
+<!--     m_bar   = mean(m), -->
+<!--     n_bin   = dplyr::n(), -->
+<!--     .groups = "drop" -->
+<!--   ) %>% -->
+<!--   # keep only bins where 0<m<1 (avoid logit problems) -->
+<!--   filter(m_bar > 0 & m_bar < 1) -->
+
+<!-- # logistic transform of mean symptom level -->
+<!-- bin_df$logit_m <- logit(bin_df$m_bar) -->
+
+<!-- # Fit simple linear model: logit(m_bar) ~ P_bar  (weighted by bin size) -->
+<!-- fit_gamma <- lm(logit_m ~ P_bar, data = bin_df, weights = n_bin) -->
+<!-- summary(fit_gamma) -->
+
+<!-- slope_hat  <- coef(fit_gamma)["P_bar"] -->
+<!-- gamma_P_hat <- as.numeric(slope_hat / BETA) -->
+<!-- cat("Gamma_P = ", gamma_P_hat) -->
+
+<!-- ``` -->
+
+
+
+Now we have:
+  
+* $J_{\text{eff}}$ from the spectral radius of the symptom network,
+* $\theta_0$ from matching the baseline mean at $P=0$,
+* $\gamma_P$ from the slope of symptom–precarity relationship.
+
+These three numbers define the *empirical mean-field Ising layer* you can plug into the theoretical slow–fast framework:
+  
+$$
+    m = \sigma\big(\beta[J_{\text{eff}} m + \theta_0 + \gamma_P P]\big).
+$$
+
+### Build the slow equation using the HELIUS $m(P)$
+
+#### HELIUS-calibrated bifurcation diagram
+
+First we want to know:
+  
+  > With our HELIUS-based $J_{\text{eff}}, \beta, \theta_0, \gamma_P$, do we actually get bistability, and at which $P$-range?
+
+
+
+```{r}
+fixed_points_all <- function(P, beta, J, theta0, gammaP) {
+  f <- function(m) 1/(1 + exp(-beta*(J*m + theta0 + gammaP*P))) - m
+  df <- function(m){
+    p <- 1/(1 + exp(-beta*(J*m + theta0 + gammaP*P)))
+    beta * J * p*(1 - p) - 1
+  }
+  grid <- seq(0,1,length=801); 
+  y <- f(grid)
+  cand <- which(diff(sign(y))!=0)
+
+  roots <- c()
+  for (k in cand){
+    r <- try(uniroot(f, c(grid[k],grid[k+1]))$root, silent=TRUE)
+    if (!inherits(r,"try-error")) roots <- c(roots,r)
+  }
+  roots <- sort(unique(round(roots,6)))
+  if (length(roots)==0) return(NULL)
+
+  data.frame(m=roots, stable = (df(roots) < 0))
+}
+
+
+extract_branches <- function(P_grid, beta, J, theta0, gammaP){
+  out <- lapply(P_grid, function(P){
+    fps <- fixed_points_all(P, beta, J, theta0, gammaP)
+    if (is.null(fps)) return(data.frame(P=P, m_low=NA, m_mid=NA, m_high=NA))
+
+    if (nrow(fps)==1){
+      m <- fps$m
+      return(data.frame(P=P,
+          m_low = ifelse(m<0.5,m,NA),
+          m_mid = NA,
+          m_high = ifelse(m>=0.5,m,NA)))
+    }
+
+    if (nrow(fps)==3){
+      m_low  <- min(fps$m[fps$stable])
+      m_high <- max(fps$m[fps$stable])
+      m_mid  <- fps$m[!fps$stable]
+      return(data.frame(P=P, m_low=m_low, m_mid=m_mid, m_high=m_high))
+    }
+
+    data.frame(P=P, m_low=NA, m_mid=NA, m_high=NA)
+  })
+  do.call(rbind,out)
+}
+
+```
+  
+  
+  
+```{r}
+# P grid in a sensible range
+P_grid <- seq(-20, 10, length.out = 201)
+
+# Use the new functions
+branches <- extract_branches(
+  P_grid = P_grid,
+  beta   = BETA,
+  J      = J_eff,
+  theta0 = theta0,
+  gammaP = gamma_P_hat
+)
+
+all_pts <- purrr::map_dfr(P_grid, function(P) {
+  fixed_points_all(P, BETA, J_eff, theta0, gamma_P_hat) |>
+    dplyr::mutate(P = P)
+})
+
+group_means <- data.frame(
+  group = c("Dutch", "NonDutch"),
+  P_mean = c(mean(P[data_cleaned$group == "Dutch"],    na.rm = TRUE),
+             mean(P[data_cleaned$group == "NonDutch"], na.rm = TRUE))
+)
+
+ggplot() +
+  # bistable band
+  geom_ribbon(
+    data = branches %>% dplyr::filter(!is.na(m_low) & !is.na(m_high)),
+    aes(x = P, ymin = m_low, ymax = m_high),
+    fill = "grey80", alpha = 0.5
+  ) +
+  # unstable mid branch
+  geom_line(
+    data = all_pts %>% dplyr::filter(!stable),
+    aes(P, m),
+    linetype = "dashed", color = "grey50"
+  ) +
+  # stable low
+  geom_line(
+    data = all_pts %>% dplyr::filter(stable & m < 0.5),
+    aes(P, m, color = "Low branch"),
+    linewidth = 1
+  ) +
+  # stable high
+  geom_line(
+    data = all_pts %>% dplyr::filter(stable & m >= 0.5),
+    aes(P, m, color = "High branch"),
+    linewidth = 1
+  ) +
+  geom_vline(data = group_means,
+             aes(xintercept = P_mean, linetype = group),
+             linewidth = 0.8, alpha = 0.9) +
+  scale_color_manual(values = c("Low branch" = "#0072B2",
+                                "High branch" = "#D55E00")) +
+  labs(
+    title    = "HELIUS-calibrated bifurcation of fast layer",
+    subtitle = "Grey band = bistable region; vertical lines = group mean P",
+    x        = "Precarity index P",
+    y        = "Mean symptom activation m",
+    color    = NULL,
+    linetype = "Group"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "top")
+
+```
+  
+<!-- Define a fixed-point solver using your calibrated parameters: -->
+
+<!-- ```{r} -->
+
+<!-- # --- fixed point solver (HELIUS parameters) ------------------------ -->
+<!-- # For a given precarity value P, find all equilibrium points m* satisfying: -->
+<!-- #     m* = σ(β[J_eff*m* + θ0 + γP * P]) -->
+<!-- # i.e., roots of: f(m) = σ(β[...]) - m = 0 -->
+<!-- # -->
+<!-- # Also determine stability using df/dm < 0 -->
+
+<!-- fixed_points_HELIUS <- function(P, beta, J_eff, theta0, gammaP){ -->
+
+<!--   # --- Mean-field fixed point equation f(m) = 0 --------------------- -->
+<!--   f  <- function(m) { -->
+<!--     1/(1 + exp(-beta * (J_eff*m + theta0 + gammaP*P))) - m -->
+<!--   } -->
+
+<!--   # --- Derivative df/dm, to determine stability --------------------- -->
+<!--   # A fixed point m* is stable if df(m*) < 0 -->
+<!--   df <- function(m){ -->
+<!--     p <- 1/(1 + exp(-beta * (J_eff*m + theta0 + gammaP*P))) -->
+<!--     beta * J_eff * p*(1 - p) - 1 -->
+<!--   } -->
+
+<!--   # --- Search for zero-crossings of f(m) on a fine grid ------------- -->
+<!--   grid <- seq(0, 1, length = 601) -->
+<!--   y    <- f(grid) -->
+
+<!--   # indices where f changes sign between grid points -->
+<!--   cand <- which(diff(sign(y)) != 0) -->
+
+<!--   # --- Refine roots using uniroot() --------------------------------- -->
+<!--   roots <- c() -->
+<!--   for(k in cand){ -->
+<!--     r <- try(uniroot(f, c(grid[k], grid[k+1]))$root, silent = TRUE) -->
+<!--     if(!inherits(r, "try-error")) { -->
+<!--       roots <- c(roots, r) -->
+<!--     } -->
+<!--   } -->
+
+<!--   # Deduplicate & sort roots -->
+<!--   roots <- sort(unique(round(roots, 6))) -->
+
+<!--   # --- Output: equilibrium m & stability flag ------------------------ -->
+<!--   data.frame( -->
+<!--     m      = roots, -->
+<!--     stable = (df(roots) < 0) -->
+<!--   ) -->
+<!-- } -->
+
+
+
+<!-- # --- Extract stable "low" and "high" branches across P-grid ---------- -->
+<!-- # For each P in P_grid: -->
+<!-- #   - find the fixed points using fixed_points_HELIUS() -->
+<!-- #   - keep the stable ones -->
+<!-- #   - classify whether the system is unimodal or bistable -->
+
+<!-- branches_HELIUS <- function(P_grid, beta, J_eff, theta0, gammaP){ -->
+
+<!--   do.call(rbind, -->
+<!--     lapply(P_grid, function(P){ -->
+
+<!--       # Get all equilibria at this P -->
+<!--       fps  <- fixed_points_HELIUS(P, beta, J_eff, theta0, gammaP) -->
+
+<!--       # Keep only stable fixed points -->
+<!--       stab <- fps[fps$stable, ] -->
+
+<!--       # --- Case 1: one stable fixed point (unimodal) ----------------- -->
+<!--       if(nrow(stab) == 1){ -->
+
+<!--         if(stab$m < 0.5){ -->
+<!--           # stable point is the low branch -->
+<!--           data.frame(P = P, unimodal = TRUE, -->
+<!--                      m_low = stab$m, m_high = NA) -->
+<!--         } else { -->
+<!--           # stable point is the high branch -->
+<!--           data.frame(P = P, unimodal = TRUE, -->
+<!--                      m_low = NA, m_high = stab$m) -->
+<!--         } -->
+
+<!--       # --- Case 2: two stable points → bistability ------------------- -->
+<!--       } else if(nrow(stab) == 2){ -->
+
+<!--         data.frame(P = P, unimodal = FALSE, -->
+<!--                    m_low  = min(stab$m), -->
+<!--                    m_high = max(stab$m)) -->
+
+<!--       # --- Case 3: weird case (no stable points) --------------------- -->
+<!--       } else { -->
+
+<!--         data.frame(P = P, unimodal = NA, -->
+<!--                    m_low = NA, m_high = NA) -->
+<!--       } -->
+
+<!--     }) -->
+<!--   ) -->
+<!-- } -->
+
+
+<!-- ``` -->
+
+
+<!-- Now create the bifurcation plot with your HELIUS parameters and show where the groups live (e.g., Dutch vs NonDutch). -->
+
+<!-- ```{r} -->
+<!-- P_grid <- seq(-20, 10, length.out = 201) -->
+
+<!-- br_helius <- branches_HELIUS( -->
+<!--   P_grid = P_grid, -->
+<!--   beta   = BETA,     # your chosen β -->
+<!--   J_eff  = J_eff,    # from eigen(W) -->
+<!--   theta0 = theta0,   # calibrated from mean m at P≈0 -->
+<!--   gammaP = gamma_P_hat    # from logit regression -->
+<!-- ) -->
+
+<!-- all_pts <- purrr::map_dfr(P_grid, function(P) { -->
+<!--   fixed_points_HELIUS(P, BETA, J_eff, theta0, gamma_P_hat) |> -->
+<!--     dplyr::mutate(P = P) -->
+<!-- }) -->
+
+<!-- # group means in P (e.g. Dutch vs NonDutch or Sick vs NonSick) -->
+<!-- group_means <- data.frame( -->
+<!--   group = c("Dutch", "NonDutch"), -->
+<!--   P_mean = c(mean(P[data_cleaned$group == "Dutch"], na.rm = TRUE), -->
+<!--              mean(P[data_cleaned$group == "NonDutch"], na.rm = TRUE)) -->
+<!-- ) -->
+
+<!-- ggplot() + -->
+<!--   # bistable band -->
+<!--   geom_ribbon( -->
+<!--     data = dplyr::filter(br_helius, unimodal == FALSE), -->
+<!--     aes(x = P, ymin = m_low, ymax = m_high), -->
+<!--     fill = "grey80", alpha = 0.5 -->
+<!--   ) + -->
+<!--   # unstable -->
+<!--   geom_line( -->
+<!--     data = subset(all_pts, stable == FALSE), -->
+<!--     aes(P, m), -->
+<!--     linetype = "dashed", color = "grey50" -->
+<!--   ) + -->
+<!--   # stable low -->
+<!--   geom_line( -->
+<!--     data = subset(all_pts, stable == TRUE & m < 0.5), -->
+<!--     aes(P, m, color = "Low branch"), linewidth = 1 -->
+<!--   ) + -->
+<!--   # stable high -->
+<!--   geom_line( -->
+<!--     data = subset(all_pts, stable == TRUE & m >= 0.5), -->
+<!--     aes(P, m, color = "High branch"), linewidth = 1 -->
+<!--   ) + -->
+<!--   # group mean P as vertical lines -->
+<!--   geom_vline(data = group_means, -->
+<!--              aes(xintercept = P_mean, linetype = group), -->
+<!--              linewidth = 0.8, alpha = 0.8) + -->
+<!--   scale_color_manual(values = c("Low branch" = "#0072B2", -->
+<!--                                 "High branch" = "#D55E00")) + -->
+<!--   labs( -->
+<!--     title    = "HELIUS-calibrated bifurcation of fast layer", -->
+<!--     subtitle = "Grey band = bistable region; vertical lines = group mean P", -->
+<!--     x        = "Precarity index P", -->
+<!--     y        = "Mean symptom activation m", -->
+<!--     color    = NULL, -->
+<!--     linetype = "Group" -->
+<!--   ) + -->
+<!--   theme_minimal(base_size = 13) + -->
+<!--   theme(legend.position = "top") -->
+<!-- ``` -->
+
+
+#### Switching rates
+```{r}
+compute_switching_rates <- function(branch_df, 
+                                    k0 = 0.2, 
+                                    a  = 5,
+                                    eps_rate = 0.001) {
+
+  d_up   <- branch_df$m_mid  - branch_df$m_low      # low → mid
+  d_down <- branch_df$m_high - branch_df$m_mid      # mid → high
+
+  k_up   <- rep(0, nrow(branch_df))
+  k_down <- rep(0, nrow(branch_df))
+
+  idx <- which(!is.na(d_up) & !is.na(d_down) &
+                 d_up > 0 & d_down > 0)
+
+  k_up[idx]   <- k0 * exp(-a * d_up[idx]^2)
+  k_down[idx] <- k0 * exp(-a * d_down[idx]^2)
+
+  # ---- MINIMUM SWITCHING FLOOR ----
+  k_up   <- pmax(k_up,   eps_rate)
+  k_down <- pmax(k_down, eps_rate)
+
+  data.frame(P = branch_df$P,
+             k_up = k_up,
+             k_down = k_down)
+}
+
+
+```
+
+
+```{r}
+branches <- extract_branches(P_grid, BETA, J_eff, theta0, gamma_P_hat)
+switch_rates <- compute_switching_rates(branches)
+
+```
+
+
+#### Define m_low_fun, m_high_fun, k_up_fun, k_down_fun
+
+```{r}
+# ----- Safe helper: discrete (P,y) -> bounded smooth y(P) ----------------
+# No extrapolation outside the P grid (inputs clamped).
+# Outputs are bounded to [y_min, y_max].
+# If spline misbehaves or data is too sparse, you get a constant fallback
+
+mk_fun_safe <- function(x, y, fallback,
+                        y_min = -Inf, y_max = Inf) {
+  # keep only finite points
+  keep <- is.finite(x) & is.finite(y)
+  xk <- x[keep]
+  yk <- y[keep]
+
+  # if we have <2 distinct x values, just return constant function
+  if (length(unique(xk)) < 2L) {
+    return(function(P) rep(fallback, length(P)))
+  }
+
+  # basic clipping of data to avoid crazy spline shapes: clamp observed y to [y_min, y_max] before fitting spline
+  yk <- pmin(pmax(yk, y_min), y_max)
+
+  # monotone Hermite spline (shape-preserving)
+  sf <- splinefun(xk, yk, method = "monoH.FC")
+
+  # remember domain of x for later clamping
+  P_min <- min(xk)
+  P_max <- max(xk)
+
+  function(P) {
+    # 1) clamp input to domain
+    Pc <- pmin(pmax(P, P_min), P_max)
+
+    # 2) evaluate spline
+    out <- sf(Pc)
+
+    # 3) clamp output to [y_min, y_max]
+    out <- pmin(pmax(out, y_min), y_max)
+
+    # 4) replace NA/Inf with fallback
+    out[!is.finite(out)] <- fallback
+
+    as.numeric(out)
+  }
+}
+
+m_low_fun  <- mk_fun_safe(branches$P, branches$m_low,
+                          fallback = mean(m_obs),
+                          y_min = 0, y_max = 1)
+
+m_high_fun <- mk_fun_safe(branches$P,
+     ifelse(is.na(branches$m_high), branches$m_low, branches$m_high),
+     fallback = mean(m_obs),
+     y_min = 0, y_max = 1)
+
+k_up_fun   <- mk_fun_safe(switch_rates$P, switch_rates$k_up,
+                          fallback = 0,
+                          y_min = 0, y_max = Inf)
+
+k_down_fun <- mk_fun_safe(switch_rates$P, switch_rates$k_down,
+                          fallback = 0,
+                          y_min = 0, y_max = Inf)
+
+```
+
+
+From the frozen fast-layer simulations we get discrete summaries for each precarity value $P$: low/high mean activation $m_{\text{low/high}}(P)$ and switching rates $k_{\uparrow/\downarrow}(P)$.
+We then interpolate these tables with monotone splines to obtain smooth functions $m_{\text{low}}(P)$, $m_{\text{high}}(P)$, $k_\uparrow(P)$, $k_\downarrow(P)$ that we can plug into the slow SDE.
+
+
+
+
+
+
+#### Build the slow equation using the HELIUS $m(P)$ (SDE)
+  
+For groups that sit outside the bistable band, the rates $k_\uparrow, k_\downarrow ≈0$ and the model automatically reduces to a unimodal SDE.
+  
+```{r}
+#### Unified hybrid slow–fast SDE --------------------------------------
+
+# drift(P, m) = -kappa (P - P_star) + beta_m (m - m_star)
+# parameters are passed via drift_pars list
+
+simulate_P_hybrid <- function(
+    P0,                        # initial precarity
+    T = 4000, dt = 0.2,
+    sigma = 0.01,              # noise strength
+    
+    # fast-layer summary functions (usually the HELIUS-calibrated ones above)
+    m_low  = m_low_fun,
+    m_high = m_high_fun,
+    k_up   = k_up_fun,
+    k_down = k_down_fun,
+    
+    # group-specific drift parameters
+    #   kappa: mean-reverting strength
+    #   beta_m: coupling strength symptom -> P
+    #   P_star: long-term baseline P
+    #   m_star: reference symptom level
+    drift_pars,
+    x0 = 0L                    # 0 = low-symptom regime, 1 = high-symptom
+){
+  n <- ceiling(T / dt)
+  P <- numeric(n); P[1] <- P0
+  X <- integer(n); X[1] <- x0
+  
+  for (t in 2:n) {
+    Pt <- P[t-1]
+    
+    ## 1) Fast regime switching (two-state Markov jump process)
+    # --- Safe switching values ---
+    ku <- k_up_fun(Pt)
+    kd <- k_down_fun(Pt)
+    
+    # Clamp to non-negative finite
+    if (!is.finite(ku) || ku < 0) ku <- 0
+    if (!is.finite(kd) || kd < 0) kd <- 0
+    
+    # Decide whether we jump X_t
+    if (X[t-1] == 0L && runif(1) < ku * dt) {
+      X[t] <- 1L
+    } else if (X[t-1] == 1L && runif(1) < kd * dt) {
+      X[t] <- 0L
+    } else {
+      X[t] <- X[t-1]
+    }
+    
+    
+    # corresponding mean symptom activation m(P_t): mean symptom level given state X_t and current P_t
+    m_t <- if (X[t] == 0L) m_low(Pt) else m_high(Pt)
+    
+    ## 2) Slow drift of precarity P_t: dP/dt=-kappa(P-P_star)+beta_m(m-m_star)
+    dP <- - drift_pars$kappa  * (Pt - drift_pars$P_star) +
+      drift_pars$beta_m * (m_t - drift_pars$m_star)
+    
+    # Euler–Maruyama update
+    P[t] <- Pt + dP * dt + sigma * sqrt(dt) * rnorm(1)
+  }
+  
+  list(P = ts(P, deltat = dt), X = X)
+}
+```
+
+
+We evolve the slow precarity index $P_t$ using a hybrid slow–fast SDE in which the fast symptom network is reduced to a two-state metastable process (low vs high activation). 
+The mean symptom input $m_t$ and switching rates $k_{\uparrow/\downarrow}(P_t)$ are taken from the HELIUS-calibrated frozen-layer simulations.
+
+
+
+
+
+
+<!-- #### Group-specific drift parameters (Dutch vs NonDutch) -->
+
+<!-- Use the same fast-layer functions for every group; only the slow drift parameters differ. -->
+
+<!-- ```{r} -->
+<!-- #### (Group-specific) drift parameters ----------------------------------- -->
+
+<!-- # Group means in P-space (from the PC1 index) -->
+<!-- P_mean_dutch    <- mean(P[data_cleaned$group == "Dutch"],    na.rm = TRUE) -->
+<!-- P_mean_nondutch <- mean(P[data_cleaned$group == "NonDutch"], na.rm = TRUE) -->
+
+<!-- # Baseline m*: overall mean symptom activation (can also make group-specific) -->
+<!-- m_star_global <- mean(m_obs, na.rm = TRUE) -->
+
+<!-- # kappa: mean reverting rate; fast layer = 2wks, slow layer = 1 yr (52weeks) -->
+<!-- # 1 model unit = 2 weeks --> dt = 0.2 = 0.4 weeks per integration step -->
+<!-- KAPPA <- 2/52 # fast time scale (1 model unit) / slow timescale --> 26 fast units = 1 year -->
+
+<!-- # coef of symptom --> precarity -->
+<!-- BETA_M <- 2 * KAPPA # strong coupling the P_eq = P* + BETA_M/KAPPA (m_eq - m()) -->
+<!-- ``` -->
+
+
+
+<!-- ```{r} -->
+<!-- # Dutch: mean P is inside the bistable band → potential switching -->
+<!-- drift_dutch <- list( -->
+<!--   kappa  = KAPPA,              # mean reversion -->
+<!--   beta_m = BETA_M,               # symptom → P push -->
+<!--   P_star = P_mean_dutch,      # long-term target for Dutch -->
+<!--   m_star = m_star_global -->
+<!-- ) -->
+
+<!-- # NonDutch: mean P lies closer to/above upper fold → effectively unimodal -->
+<!-- drift_nondutch <- list( -->
+<!--   kappa  = KAPPA, -->
+<!--   beta_m = BETA_M, -->
+<!--   P_star = P_mean_nondutch, -->
+<!--   m_star = m_star_global -->
+<!-- ) -->
+<!-- ``` -->
+
+
+
+
+<!-- #### Simulate both groups with the same hybrid function -->
+
+<!-- ```{r} -->
+<!-- #### Run hybrid simulations for both groups ---------------------------- -->
+
+<!-- set.seed(2025) -->
+
+<!-- sim_dutch <- simulate_P_hybrid( -->
+<!--   P0         = P_mean_dutch, -->
+<!--   drift_pars = drift_dutch, -->
+<!--   sigma      = 0.1, -->
+<!--   x0         = 0L    # start on low-symptom branch -->
+<!-- ) -->
+
+<!-- sim_nondutch <- simulate_P_hybrid( -->
+<!--   P0         = P_mean_nondutch, -->
+<!--   drift_pars = drift_nondutch, -->
+<!--   sigma      = 0.1, -->
+<!--   x0         = 0L -->
+<!-- ) -->
+<!-- ``` -->
+
+
+<!-- #### Plot trajectories side-by-side -->
+
+<!-- ```{r} -->
+<!-- #### Visualise Dutch vs NonDutch precarity trajectories ---------------- -->
+
+<!-- df_hybrid <- tibble( -->
+<!--   time     = time(sim_dutch$P), -->
+<!--   Dutch    = as.numeric(sim_dutch$P), -->
+<!--   NonDutch = as.numeric(sim_nondutch$P) -->
+<!-- ) |> -->
+<!--   pivot_longer(-time, names_to = "group", values_to = "P") -->
+
+<!-- ggplot(df_hybrid, aes(x = time, y = P, color = group)) + -->
+<!--   geom_line(linewidth = 0.8, alpha = 0.9) + -->
+<!--   labs( -->
+<!--     title = "Hybrid slow–fast precarity dynamics (HELIUS-calibrated)", -->
+<!--     subtitle = "Same fast-layer nonlinearity; group differences only via drift parameters", -->
+<!--     x = "Time", -->
+<!--     y = "Precarity index P" -->
+<!--   ) + -->
+<!--   theme_minimal(base_size = 13) + -->
+<!--   theme(legend.position = "top") -->
+<!-- ``` -->
+
+
+
+
+
+#### Calibrate slow drift using the cross-sectional snapshot
+  
+We now work with the slow precarity SDE, assuming the fast layer has already been collapsed into $m_{\text{low}}(P)$, $m_{\text{high}}(P)$, $k_\uparrow(P)$, $k_\downarrow(P)$.
+  
+Our strategy:
+    
+1. Fix **κ** from time-scale separation.
+
+2. For each group (Dutch / NonDutch):
+    
+  * Fix a baseline $m^*$ from the *low branch at the group mean P*.
+  * Calibrate **βₘ** so that the model reproduces **cor(P, m)**.
+  * Calibrate **σ** so that the model reproduces **Var(P)**.
+  * Correct **P*** so the stationary mean of P matches the empirical mean.
+
+3. Generate a *synthetic population* of individuals per group:
+    
+  * simulate one trajectory per synthetic person,
+  * take one snapshot in the stationary regime,
+  * compare this pseudo-cross-section against HELIUS.
+ 
+  
+##### Empirical targets from HELIUS ($P$, $m$) by group
+
+```{r}
+#### Calibrate slow drift using the cross-sectional snapshot  -----------
+
+# We treat HELIUS as an approximate stationary snapshot.
+# Targets by group:
+#  - cor(P, m)
+#  - Var(P)
+
+data_targets <- data_cleaned %>%
+  mutate(
+    P = P,
+    m = m_obs
+  ) %>%
+  group_by(group) %>%
+  summarise(
+    P_mean  = mean(P),
+    P_sd    = sd(P),
+    m_mean  = mean(m),
+    m_sd    = sd(m),
+    cor_P_m = cor(P, m),
+    var_P   = var(P),
+    .groups = "drop"
+  )
+
+data_targets
+
+```
+
+This table is what we’d like the *model snapshot* to resemble at stationarity.
+
+
+
+
+
+##### Group-specific drift baselines (shared κ, group-specific P*, m*)
+  
+ We keep:
+  
+* $κ$ fixed from time-scale separation: fast = 2 weeks, slow ≈ 1 year.
+* `P_star` = empirical group mean precarity (as you already set).
+* but we now align `m_star` with the **low branch** at the group mean, so the symptom term doesn’t constantly push $P$ away from its baseline when we sit on the low state.
+
+```{r}
+# ----------- Slow drift baselines (group-specific P*, m*) --------------
+
+# Group means in P-space (from precarity index)
+P_mean_dutch    <- mean(data_cleaned$P[data_cleaned$group == "Dutch"],    na.rm = TRUE)
+P_mean_nondutch <- mean(data_cleaned$P[data_cleaned$group == "NonDutch"], na.rm = TRUE)
+
+# Time-scale separation:
+# fast layer = 2 weeks, slow layer ≈ 1 year (52 weeks)
+# 1 model unit = 2 weeks → 26 fast units = 1 year → kappa = 2/52
+KAPPA <- 2/52
+
+# m* = low-branch symptom level at the group mean P
+m_star_dutch    <- m_low_fun(P_mean_dutch)
+m_star_nondutch <- m_low_fun(P_mean_nondutch)
+
+# Drift skeletons (β_m and P_star will be tuned)
+drift_base_dutch <- list(
+  kappa  = KAPPA,
+  beta_m = NA_real_,       # to be calibrated
+  P_star = P_mean_dutch,   # initial guess, will be corrected
+  m_star = m_star_dutch
+)
+
+drift_base_nondutch <- list(
+  kappa  = KAPPA,
+  beta_m = NA_real_,       
+  P_star = P_mean_nondutch,
+  m_star = m_star_nondutch
+)
+
+
+```
+
+
+
+
+#####  Helper: simulate a stationary snapshot for one group (for calibration)
+
+
+We’ll (i) simulate a long trajectory, (ii) discard burn-in, and (iii) treat the remaining samples as a stationary snapshot comparable to HELIUS.
+
+```{r}
+# ---- ONE-GROUP stationary snapshot (for calibration) ------------------
+
+simulate_snapshot_one_group <- function(beta_m, sigma,
+                                        drift_base,
+                                        P0,
+                                        R = 6,          # independent runs
+                                        seed = 1,
+                                        T = 4000,
+                                        dt = 0.2,
+                                        burnin_frac = 0.5,
+                                        label = "Dutch") {
+
+  set.seed(seed)
+  out_list <- vector("list", R)
+
+  for (r in 1:R) {
+    drift_pars <- drift_base
+    drift_pars$beta_m <- beta_m
+
+    sim <- simulate_P_hybrid(
+      P0         = P0,
+      drift_pars = drift_pars,
+      sigma      = sigma,
+      T          = T,
+      dt         = dt,
+      x0         = 0L
+    )
+
+    # discard burn-in
+    tt   <- time(sim$P)
+    keep <- tt > max(tt) * burnin_frac
+
+    P_tail <- as.numeric(sim$P)[keep]
+    X_tail <- sim$X[keep]
+    m_tail <- ifelse(X_tail == 0L,
+                     m_low_fun(P_tail),
+                     m_high_fun(P_tail))
+
+    out_list[[r]] <- tibble(P = P_tail, m = m_tail)
+  }
+
+  pooled <- bind_rows(out_list)
+
+  tibble(
+    group   = label,
+    cor_P_m = cor(pooled$P, pooled$m),
+    var_P   = var(pooled$P)
+  )
+}
+
+
+
+```
+
+
+<!-- ```{r} -->
+<!-- # ----------- Multi-simulation wrapper for calibration ------------------ -->
+
+<!-- simulate_group_snapshot_multi <- function(beta_m, sigma,  -->
+<!--                                           R = 10,   # number of replicates -->
+<!--                                           seed = 1, -->
+<!--                                           T = 4000, dt = 0.2, -->
+<!--                                           burnin_frac = 0.5) { -->
+
+<!--   set.seed(seed) -->
+<!--   out_list <- vector("list", R) -->
+
+<!--   for (r in 1:R) { -->
+<!--     out_list[[r]] <- simulate_group_snapshot( -->
+<!--       beta_m = beta_m, -->
+<!--       sigma  = sigma, -->
+<!--       seed   = seed + r, # different seed per run -->
+<!--       T = T, dt = dt, burnin_frac = burnin_frac -->
+<!--     ) -->
+<!--   } -->
+
+<!--   bind_rows(out_list) |> -->
+<!--     group_by(group) |> -->
+<!--     summarise( -->
+<!--       cor_P_m = mean(cor_P_m), -->
+<!--       var_P   = mean(var_P), -->
+<!--       .groups = "drop" -->
+<!--     ) -->
+<!-- } -->
+
+<!-- ``` -->
+
+
+##### Calibrate $βₘ$ per group to match P–symptom correlation
+
+We now choose $βₘ$ so that the **model-implied correlation** between $P$ and $m$ matches the data as closely as possible per group.
+
+
+```{r}
+# ---------------- β_m calibration: match cor(P, m) ---------------------
+
+# Empirical cor(P, m) by group
+cor_target_dutch    <- data_targets$cor_P_m[data_targets$group == "Dutch"]
+cor_target_nondutch <- data_targets$cor_P_m[data_targets$group == "NonDutch"]
+
+# Dutch: objective in β_m
+beta_obj_dutch <- function(beta_m) {
+  if (!is.finite(beta_m) || beta_m < 0) return(1e6)
+
+  stats_sim <- simulate_snapshot_one_group(
+    beta_m     = beta_m,
+    sigma      = 0.03,              # small fixed noise during β calibration
+    drift_base = drift_base_dutch,
+    P0         = P_mean_dutch,
+    R          = 6,
+    label      = "Dutch"
+  )
+
+  (stats_sim$cor_P_m - cor_target_dutch)^2
+}
+
+# NonDutch: objective in β_m
+beta_obj_nondutch <- function(beta_m) {
+  if (!is.finite(beta_m) || beta_m < 0) return(1e6)
+
+  stats_sim <- simulate_snapshot_one_group(
+    beta_m     = beta_m,
+    sigma      = 0.03,
+    drift_base = drift_base_nondutch,
+    P0         = P_mean_nondutch,
+    R          = 6,
+    label      = "NonDutch"
+  )
+
+  (stats_sim$cor_P_m - cor_target_nondutch)^2
+}
+
+# Optimize β_m per group
+beta_search_dutch    <- optimize(beta_obj_dutch,    interval = c(0, 1), tol = 1e-2)
+beta_search_nondutch <- optimize(beta_obj_nondutch, interval = c(0, 1), tol = 1e-2)
+
+BETA_M_hat_dutch    <- beta_search_dutch$minimum
+BETA_M_hat_nondutch <- beta_search_nondutch$minimum
+
+cat("BETA_M_hat_dutch    =", round(BETA_M_hat_dutch, 4), "\n")
+cat("BETA_M_hat_nondutch =", round(BETA_M_hat_nondutch, 4), "\n")
+
+
+```
+
+
+<!-- ```{r} -->
+<!-- # ------------------------------------------------------------------- -->
+<!-- # Objective: match cor(P, m) across Dutch / NonDutch  -->
+<!-- # ------------------------------------------------------------------- -->
+
+<!-- beta_obj <- function(beta_m) { -->
+
+<!--   if (!is.finite(beta_m) || beta_m < 0) return(1e6) -->
+
+<!--   sim_stats <- simulate_group_snapshot_multi( -->
+<!--     beta_m = beta_m, -->
+<!--     sigma  = 0.03,   # temporary noise during β calibration -->
+<!--     R      = 8       # try 8–10 replicates -->
+<!--   ) -->
+
+<!--   joined <- sim_stats |> -->
+<!--     inner_join(data_targets |> select(group, cor_P_m), by="group", -->
+<!--                suffix=c("_sim","_data")) -->
+
+<!--   sum((joined$cor_P_m_sim - joined$cor_P_m_data)^2) -->
+<!-- } -->
+
+<!-- beta_search <- optimize(beta_obj, interval=c(0, 1), tol=1e-2) -->
+<!-- BETA_M_hat <- beta_search$minimum -->
+
+<!-- ``` -->
+
+<!-- You can tweak the interval `[0, 2]` if you expect stronger coupling. -->
+
+
+
+
+##### Calibrate $σ$ to match `Var(P)` given $βₘ̂$
+
+Next, with $βₘ$ fixed at its calibrated value, we tune the noise level $σ$ so that the model reproduces the **variance of $P$** in each group.
+
+
+```{r}
+# --------------- σ calibration: match Var(P) per group -----------------
+
+var_target_dutch    <- data_targets$var_P[data_targets$group == "Dutch"]
+var_target_nondutch <- data_targets$var_P[data_targets$group == "NonDutch"]
+
+# Dutch: objective in σ
+sigma_obj_dutch <- function(sigma) {
+  if (!is.finite(sigma) || sigma <= 0) return(1e6)
+
+  stats_sim <- simulate_snapshot_one_group(
+    beta_m     = BETA_M_hat_dutch,
+    sigma      = sigma,
+    drift_base = drift_base_dutch,
+    P0         = P_mean_dutch,
+    R          = 6,
+    label      = "Dutch"
+  )
+
+  (stats_sim$var_P - var_target_dutch)^2
+}
+
+# NonDutch: objective in σ
+sigma_obj_nondutch <- function(sigma) {
+  if (!is.finite(sigma) || sigma <= 0) return(1e6)
+
+  stats_sim <- simulate_snapshot_one_group(
+    beta_m     = BETA_M_hat_nondutch,
+    sigma      = sigma,
+    drift_base = drift_base_nondutch,
+    P0         = P_mean_nondutch,
+    R          = 6,
+    label      = "NonDutch"
+  )
+
+  (stats_sim$var_P - var_target_nondutch)^2
+}
+
+sigma_search_dutch    <- optimize(sigma_obj_dutch,    interval = c(0.01, 0.5), tol = 1e-3)
+sigma_search_nondutch <- optimize(sigma_obj_nondutch, interval = c(0.01, 0.5), tol = 1e-3)
+
+SIGMA_hat_dutch    <- sigma_search_dutch$minimum
+SIGMA_hat_nondutch <- sigma_search_nondutch$minimum
+
+cat("SIGMA_hat_dutch    =", round(SIGMA_hat_dutch, 4), "\n")
+cat("SIGMA_hat_nondutch =", round(SIGMA_hat_nondutch, 4), "\n")
+
+```
+
+
+
+
+##### Correct $P*$ per group so the mean of $P$ is right
+    
+Even if we start with $P^* = \bar P_{\text{group}}$, the coupling $βₘ(m–m*)$ shifts the stationary mean away from $P*$. We correct that analytically + via one simulation per group.
+  
+  1. First, diagnose the *current* stationary mean.
+  2. Then, use the approximate linear relation
+  $\mathbb{E}[P] \approx P^* + (\beta_m / \kappa)\big(\mathbb{E}[m] - m^*\big)$
+  to back-solve for the **corrected** $P^*$.
+  
+```{r}
+  # -----------------------------------------------------------
+  # Diagnostic: stationary means under current calibration
+  # -----------------------------------------------------------
+  
+  diagnose_stationary_means <- function(
+    drift_base, beta_m, sigma, P0,
+    label, T = 4000, dt = 0.2, burnin_frac = 0.5) {
+    
+    drift_pars <- drift_base
+    drift_pars$beta_m <- beta_m
+    
+    sim <- simulate_P_hybrid(
+      P0         = P0,
+      drift_pars = drift_pars,
+      sigma      = sigma,
+      T          = T,
+      dt         = dt,
+      x0         = 0L
+    )
+    
+    tt   <- time(sim$P)
+    keep <- tt > max(tt) * burnin_frac
+    
+    P_tail <- as.numeric(sim$P)[keep]
+    X_tail <- sim$X[keep]
+    m_tail <- ifelse(X_tail == 0L,
+                     m_low_fun(P_tail),
+                     m_high_fun(P_tail))
+    
+    tibble(
+      group      = label,
+      P_mean_sim = mean(P_tail),
+      m_mean_sim = mean(m_tail)
+    )
+  }
+  
+  diag_dutch <- diagnose_stationary_means(
+    drift_base = drift_base_dutch,
+    beta_m     = BETA_M_hat_dutch,
+    sigma      = SIGMA_hat_dutch,
+    P0         = P_mean_dutch,
+    label      = "Dutch"
+  )
+  
+  diag_nondutch <- diagnose_stationary_means(
+    drift_base = drift_base_nondutch,
+    beta_m     = BETA_M_hat_nondutch,
+    sigma      = SIGMA_hat_nondutch,
+    P0         = P_mean_nondutch,
+    label      = "NonDutch"
+  )
+  
+  bind_rows(diag_dutch, diag_nondutch)
+```
+  
+  
+Now use those diagnostics to correct $P^*$:
+    
+```{r}
+  # -----------------------------------------------------------
+  # Correct P_star so that E[P] ≈ empirical group mean
+  # -----------------------------------------------------------
+  
+  correct_P_star <- function(drift_base, beta_m, kappa,
+                             P_mean_data, m_star,
+                             sigma, P0, label) {
+    
+    diag <- diagnose_stationary_means(
+      drift_base = drift_base,
+      beta_m     = beta_m,
+      sigma      = sigma,
+      P0         = P0,
+      label      = label
+    )
+    
+    m_mean_sim <- diag$m_mean_sim
+    
+    P_star_new <- P_mean_data - (beta_m / kappa) * (m_mean_sim - m_star)
+    
+    list(P_star_new = P_star_new,
+         m_mean_sim = m_mean_sim)
+  }
+  
+  corr_d <- correct_P_star(
+    drift_base   = drift_base_dutch,
+    beta_m       = BETA_M_hat_dutch,
+    kappa        = KAPPA,
+    P_mean_data  = data_targets$P_mean[data_targets$group == "Dutch"],
+    m_star       = drift_base_dutch$m_star,
+    sigma        = SIGMA_hat_dutch,
+    P0           = P_mean_dutch,
+    label        = "Dutch"
+  )
+  
+  corr_n <- correct_P_star(
+    drift_base   = drift_base_nondutch,
+    beta_m       = BETA_M_hat_nondutch,
+    kappa        = KAPPA,
+    P_mean_data  = data_targets$P_mean[data_targets$group == "NonDutch"],
+    m_star       = drift_base_nondutch$m_star,
+    sigma        = SIGMA_hat_nondutch,
+    P0           = P_mean_nondutch,
+    label        = "NonDutch"
+  )
+  
+  corr_d
+  corr_n
+  
+  # Update P_star in the drift baselines
+  drift_base_dutch$P_star    <- corr_d$P_star_new
+  drift_base_nondutch$P_star <- corr_n$P_star_new
+```
+  
+You can re-run `diagnose_stationary_means()` after this to check that `P_mean_sim` is now very close to the empirical `P_mean` per group.
+  
+  
+  
+  
+##### Quick trajectory diagnostics
+    
+Just to eyeball whether the time series live in the right ranges.
+  
+```{r}
+  # --------- Trajectory check after calibration -------------------------
+  
+  test_drift_d <- drift_base_dutch
+  test_drift_n <- drift_base_nondutch
+  test_drift_d$beta_m <- BETA_M_hat_dutch
+  test_drift_n$beta_m <- BETA_M_hat_nondutch
+  
+  sim_d <- simulate_P_hybrid(
+    P0         = P_mean_dutch,
+    drift_pars = test_drift_d,
+    sigma      = SIGMA_hat_dutch,
+    T          = 5000,
+    dt         = 0.2,
+    x0         = 0L
+  )
+  
+  sim_n <- simulate_P_hybrid(
+    P0         = P_mean_nondutch,
+    drift_pars = test_drift_n,
+    sigma      = SIGMA_hat_nondutch,
+    T          = 5000,
+    dt         = 0.2,
+    x0         = 0L
+  )
+  
+  df_P_traj <- tibble(
+    time     = time(sim_d$P),
+    Dutch    = as.numeric(sim_d$P),
+    NonDutch = as.numeric(sim_n$P)
+  ) %>%
+    pivot_longer(-time, names_to = "group", values_to = "P")
+  
+  ggplot(df_P_traj, aes(time, P, color = group)) +
+    geom_line(alpha = 0.8) +
+    labs(title = "P trajectories after calibration",
+         x = "Time", y = "Precarity P") +
+    theme_minimal()
+```
+
+
+
+
+
+
+<!-- ```{r} -->
+<!-- # --- Objective: match Var(P) across groups, given beta_m_hat ---------- -->
+<!-- sigma_obj <- function(sigma) { -->
+
+<!--   sim_stats <- simulate_group_snapshot_multi( -->
+<!--     beta_m = BETA_M_hat, -->
+<!--     sigma  = sigma, -->
+<!--     R      = 8 -->
+<!--   ) -->
+
+<!--   joined <- sim_stats |> -->
+<!--     inner_join(data_targets |> select(group, var_P), by="group", -->
+<!--                suffix=c("_sim","_data")) -->
+
+<!--   sum((joined$var_P_sim - joined$var_P_data)^2) -->
+<!-- } -->
+
+<!-- sigma_search <- optimize(sigma_obj, interval=c(0.01, 0.5), tol=1e-3) -->
+<!-- SIGMA_hat <- sigma_search$minimum -->
+
+<!-- ``` -->
+
+Now we have:
+
+* $κ*$ from time-scale separation,
+* $βₘ$ from matching `cor(P, m)`,
+* $σ̂$ from matching `Var(P)`.
+
+
+
+##### Build a synthetic cross-section 
+
+For each synthetic “individual”: simulate a trajectory, then take **one snapshot** in the stationary regime, and compare that sample to HELIUS.
+  
+
+##### Population simulator for one group
+
+<!-- ```{r} -->
+<!--   # --------- Population simulator (Option B: one snapshot per person) --- -->
+
+<!-- simulate_population_one_group <- function( -->
+<!--     N,                     # number of synthetic individuals -->
+<!--     drift_base, -->
+<!--     beta_m, -->
+<!--     sigma, -->
+<!--     P_mean, P_sd, -->
+<!--     label, -->
+<!--     T = 3000,              # length of each individual trajectory -->
+<!--     dt = 0.2, -->
+<!--     burnin_frac = 0.5, -->
+<!--     seed = 1) { -->
+
+<!--   set.seed(seed) -->
+<!--   out_list <- vector("list", N) -->
+
+<!--   for (i in 1:N) { -->
+<!--     drift_pars <- drift_base -->
+<!--     drift_pars$beta_m <- beta_m -->
+
+<!--     # draw individual-specific starting point -->
+<!--     P0_i <- rnorm(1, mean = P_mean, sd = P_sd) -->
+
+<!--     sim <- simulate_P_hybrid( -->
+<!--       P0         = P0_i, -->
+<!--       drift_pars = drift_pars, -->
+<!--       sigma      = sigma, -->
+<!--       T          = T, -->
+<!--       dt         = dt, -->
+<!--       x0         = 0L -->
+<!--     ) -->
+
+<!--     tt   <- time(sim$P) -->
+<!--     keep <- which(tt > max(tt) * burnin_frac) -->
+
+<!--     # pick a random time point from the stationary tail -->
+<!--     idx    <- sample(keep, size = 1) -->
+<!--     P_i    <- as.numeric(sim$P)[idx] -->
+<!--     X_i    <- sim$X[idx] -->
+<!--     m_i    <- ifelse(X_i == 0L, -->
+<!--                      m_low_fun(P_i), -->
+<!--                      m_high_fun(P_i)) -->
+
+<!--     out_list[[i]] <- tibble(P = P_i, m = m_i) -->
+<!--   } -->
+
+<!--   bind_rows(out_list) %>% -->
+<!--     mutate(group = label, .before = 1) -->
+<!-- } -->
+<!-- ``` -->
+
+
+<!-- ##### Generate synthetic populations with same N as HELIUS -->
+
+<!-- ```{r} -->
+<!-- # --------- Synthetic cross-section: match N per group ----------------- -->
+
+<!-- N_dutch    <- sum(data_cleaned$group == "Dutch") -->
+<!-- N_nondutch <- sum(data_cleaned$group == "NonDutch") -->
+
+<!-- set.seed(2026) -->
+
+<!-- pop_dutch_sim <- simulate_population_one_group( -->
+<!--   N        = N_dutch, -->
+<!--   drift_base = drift_base_dutch, -->
+<!--   beta_m     = BETA_M_hat_dutch, -->
+<!--   sigma      = SIGMA_hat_dutch, -->
+<!--   P_mean     = data_targets$P_mean[data_targets$group == "Dutch"], -->
+<!--   P_sd       = data_targets$P_sd[data_targets$group == "Dutch"], -->
+<!--   label      = "Dutch" -->
+<!-- ) -->
+
+
+<!-- pop_nondutch_sim <- simulate_population_one_group( -->
+<!--   N         = N_nondutch, -->
+<!--   drift_base = drift_base_nondutch, -->
+<!--   beta_m     = BETA_M_hat_nondutch, -->
+<!--   sigma      = SIGMA_hat_nondutch, -->
+<!--   P_mean     = data_targets$P_mean[data_targets$group == "NonDutch"], -->
+<!--   P_sd       = data_targets$P_sd[data_targets$group == "NonDutch"], -->
+<!--   label      = "NonDutch" -->
+<!-- ) -->
+
+
+
+
+<!-- snap_sim <- bind_rows(pop_dutch_sim, pop_nondutch_sim) %>% -->
+<!--   mutate(source = "Hybrid model") -->
+<!-- ``` -->
+
+
+<!-- And the real data in the same format: -->
+
+<!-- ```{r} -->
+<!--   snap_data <- data_cleaned %>% -->
+<!--     mutate( -->
+<!--       P      = P, -->
+<!--       m      = m_obs, -->
+<!--       source = "HELIUS data" -->
+<!--     ) %>% -->
+<!--     select(group, P, m, source) -->
+
+<!--   snap_all <- bind_rows(snap_data, snap_sim) -->
+<!-- ``` -->
+
+
+    
+
+```{r}
+N_dutch    <- sum(data_cleaned$group == "Dutch")
+N_nondutch <- sum(data_cleaned$group == "NonDutch")
+
+sample_stationary_population <- function(
+    drift_base, beta_m, sigma,
+    P0,
+    N,
+    label,
+    T = 50000,      # long single run
+    dt = 0.2,
+    burnin_frac = 0.5) {
+  
+  drift_pars <- drift_base
+  drift_pars$beta_m <- beta_m
+  
+  sim <- simulate_P_hybrid(
+    P0         = P0,
+    drift_pars = drift_pars,
+    sigma      = sigma,
+    T          = T,
+    dt         = dt,
+    x0         = 0L
+  )
+  
+  tt <- time(sim$P)
+  keep <- which(tt > max(tt) * burnin_frac)
+  
+  P_stationary <- as.numeric(sim$P)[keep]
+  X_stationary <- sim$X[keep]
+  
+  # draw N synthetic individuals from stationary distribution
+  idx <- sample(seq_along(P_stationary), size = N, replace = TRUE)
+  
+  P_sample <- P_stationary[idx]
+  X_sample <- X_stationary[idx]
+  
+  m_sample <- ifelse(X_sample == 0,
+                     m_low_fun(P_sample),
+                     m_high_fun(P_sample))
+  
+  tibble(group = label, P = P_sample, m = m_sample)
+}
+
+
+pop_dutch_sim <- sample_stationary_population(
+  drift_base = drift_base_dutch,
+  beta_m     = BETA_M_hat_dutch,
+  sigma      = SIGMA_hat_dutch,
+  P0         = P_mean_dutch,
+  N          = N_dutch,
+  label      = "Dutch"
+)
+
+pop_nondutch_sim <- sample_stationary_population(
+  drift_base = drift_base_nondutch,
+  beta_m     = BETA_M_hat_nondutch,
+  sigma      = SIGMA_hat_nondutch,
+  P0         = P_mean_nondutch,
+  N          = N_nondutch,
+  label      = "NonDutch"
+)
+
+
+snap_sim <- bind_rows(pop_dutch_sim, pop_nondutch_sim) %>%
+  mutate(source = "Hybrid model")
+
+
+snap_data <- data_cleaned %>%
+  mutate(
+    P      = P,
+    m      = m_obs,
+    source = "HELIUS data"
+  ) %>%
+  select(group, P, m, source)
+
+snap_all <- bind_rows(snap_data, snap_sim)
+
+cor(snap_all$P, snap_all$m)
+```
+    
+    
+##### Validation plots: data vs hybrid model
+    
+
+```{r}
+  # (a) P–m cloud by group
+  ggplot(snap_all, aes(x = P, y = m, color = source)) +
+    geom_point(alpha = 0.25, size = 0.7) +
+    geom_smooth(method = "loess", se = FALSE, linewidth = 0.8) +
+    facet_wrap(~ group, scales = "free_x") +
+    scale_color_manual(values = c("HELIUS data" = "black",
+                                  "Hybrid model" = "darkorange")) +
+    labs(
+      title = "P–symptom relationship: data vs hybrid model",
+      x = "Precarity index P",
+      y = "Mean symptom activation m",
+      color = ""
+    ) +
+    theme_minimal(base_size = 13) +
+    theme(legend.position = "top")
+  
+  # (b) Distribution of P by group
+  ggplot(snap_all, aes(x = P, fill = source)) +
+    geom_density(alpha = 0.4) +
+    facet_wrap(~ group) +
+    scale_fill_manual(values = c("HELIUS data" = "grey20",
+                                 "Hybrid model" = "darkorange")) +
+    labs(
+      title = "Cross-sectional precarity: data vs hybrid model",
+      x = "Precarity index P",
+      y = "Density",
+      fill = ""
+    ) +
+    theme_minimal(base_size = 13) +
+    theme(legend.position = "top")
+  
+  # (c) Correlation + variance summary from the cross-sections
+  sim_targets <- snap_sim %>%
+    group_by(group) %>%
+    summarise(
+      cor_P_m = cor(P, m),
+      var_P   = var(P),
+      .groups = "drop"
+    ) %>%
+    mutate(source = "Hybrid model")
+  
+  data_targets_short <- data_targets %>%
+    select(group, cor_P_m, var_P) %>%
+    mutate(source = "HELIUS data")
+  
+  targets_long <- bind_rows(sim_targets, data_targets_short) %>%
+    tidyr::pivot_longer(
+      cols      = c(cor_P_m, var_P),
+      names_to  = "stat",
+      values_to = "value"
+    )
+  
+  ggplot(targets_long,
+         aes(x = stat, y = value, fill = source)) +
+    geom_col(position = position_dodge(width = 0.6)) +
+    facet_wrap(~ group) +
+    scale_fill_manual(values = c("HELIUS data" = "grey20",
+                                 "Hybrid model" = "darkorange")) +
+    labs(
+      title = "Slow-layer moments from cross-section: data vs model",
+      x = "",
+      y = "Value",
+      fill = ""
+    ) +
+    theme_minimal(base_size = 13) +
+    theme(legend.position = "top")
+```
+  
+
+------- previous version
+
+<!-- ##### Final calibrated simulations and snapshot comparison -->
+
+<!--   Run the hybrid model once more with the calibrated parameters and compare *model vs data* as if both are cross-sectional snapshots. -->
+
+
+<!-- ```{r} -->
+<!-- # -------- Final calibrated simulations (Dutch / NonDutch) ------------- -->
+<!-- set.seed(2025) -->
+
+<!-- drift_dutch_cal    <- drift_base_dutch -->
+<!-- drift_nondutch_cal <- drift_base_nondutch -->
+<!-- drift_dutch_cal$beta_m    <- BETA_M_hat_dutch -->
+<!-- drift_nondutch_cal$beta_m <- BETA_M_hat_nondutch -->
+
+<!-- sim_dutch_cal <- simulate_P_hybrid( -->
+<!--   P0         = P_mean_dutch, -->
+<!--   drift_pars = drift_dutch_cal, -->
+<!--   sigma      = SIGMA_hat_dutch, -->
+<!--   T          = 5000, -->
+<!--   dt         = 0.2, -->
+<!--   x0         = 0L -->
+<!-- ) -->
+
+<!-- sim_nondutch_cal <- simulate_P_hybrid( -->
+<!--   P0         = P_mean_nondutch, -->
+<!--   drift_pars = drift_nondutch_cal, -->
+<!--   sigma      = SIGMA_hat_nondutch, -->
+<!--   T          = 5000, -->
+<!--   dt         = 0.2, -->
+<!--   x0         = 0L -->
+<!-- ) -->
+
+<!-- df_P_corr <- tibble( -->
+<!--   time     = time(sim_dutch_cal$P), -->
+<!--   Dutch    = as.numeric(sim_dutch_cal$P), -->
+<!--   NonDutch = as.numeric(sim_nondutch_cal$P) -->
+<!-- ) %>% -->
+<!--   pivot_longer(-time, names_to = "group", values_to = "P") -->
+
+<!-- ggplot(df_P_corr, aes(time, P, color = group)) + -->
+<!--   geom_line(alpha = 0.8) + -->
+<!--   labs(title = "P trajectories after correcting P_star (mean-matched)", -->
+<!--        x = "Time", y = "Precarity P") + -->
+<!--   theme_minimal() -->
+
+<!-- ``` -->
+
+
+
+<!-- ```{r} -->
+<!-- # --- Final calibrated simulations ------------------------------------- -->
+
+<!-- set.seed(2025) -->
+
+<!-- # Build final drift lists -->
+<!-- drift_dutch_cal <- drift_base_dutch -->
+<!-- drift_nondutch_cal <- drift_base_nondutch -->
+<!-- drift_dutch_cal$beta_m    <- BETA_M_hat -->
+<!-- drift_nondutch_cal$beta_m <- BETA_M_hat -->
+
+<!-- sim_dutch_cal <- simulate_P_hybrid( -->
+<!--   P0         = P_mean_dutch, -->
+<!--   drift_pars = drift_dutch_cal, -->
+<!--   sigma      = SIGMA_hat, -->
+<!--   T          = 4000, -->
+<!--   dt         = 0.2, -->
+<!--   x0         = 0L -->
+<!-- ) -->
+
+<!-- sim_nondutch_cal <- simulate_P_hybrid( -->
+<!--   P0         = P_mean_nondutch, -->
+<!--   drift_pars = drift_nondutch_cal, -->
+<!--   sigma      = SIGMA_hat, -->
+<!--   T          = 4000, -->
+<!--   dt         = 0.2, -->
+<!--   x0         = 0L -->
+<!-- ) -->
+
+<!-- # Build stationary snapshots (tail only) -->
+<!-- snapshot_from_sim <- function(sim, grp_label, burnin_frac = 0.5){ -->
+<!--   tt <- time(sim$P) -->
+<!--   P  <- as.numeric(sim$P) -->
+<!--   X  <- sim$X -->
+<!--   keep <- tt > max(tt) * burnin_frac -->
+
+<!--   P_tail <- P[keep] -->
+<!--   X_tail <- X[keep] -->
+<!--   m_tail <- ifelse(X_tail == 0L, -->
+<!--                    m_low_fun(P_tail), -->
+<!--                    m_high_fun(P_tail)) -->
+
+<!--   tibble( -->
+<!--     group = grp_label, -->
+<!--     P     = P_tail, -->
+<!--     m     = m_tail -->
+<!--   ) -->
+<!-- } -->
+
+<!-- snap_sim <- bind_rows( -->
+<!--   snapshot_from_sim(sim_dutch_cal,    "Dutch"), -->
+<!--   snapshot_from_sim(sim_nondutch_cal, "NonDutch") -->
+<!-- ) %>% -->
+<!--   mutate(source = "Hybrid model") -->
+
+<!-- snap_data <- data_cleaned %>% -->
+<!--   mutate( -->
+<!--     P      = P, -->
+<!--     m      = m_obs, -->
+<!--     source = "HELIUS data" -->
+<!--   ) %>% -->
+<!--   select(group, P, m, source) -->
+
+<!-- snap_all <- bind_rows(snap_data, snap_sim) -->
+<!-- ``` -->
+
+
+
+
+
+
+<!-- ##### Validation plots: model vs data -->
+
+<!-- ```{r} -->
+<!-- # (a) P–m cloud by group -->
+<!-- ggplot(snap_all, aes(x = P, y = m, color = source)) + -->
+<!--   geom_point(alpha = 0.25, size = 0.7) + -->
+<!--   geom_smooth(method = "loess", se = FALSE, linewidth = 0.8) + -->
+<!--   facet_wrap(~ group, scales = "free_x") + -->
+<!--   scale_color_manual(values = c("HELIUS data" = "black", -->
+<!--                                 "Hybrid model" = "darkorange")) + -->
+<!--   labs( -->
+<!--     title = "P–symptom relationship: data vs hybrid model", -->
+<!--     x = "Precarity index P", -->
+<!--     y = "Mean symptom activation m", -->
+<!--     color = "" -->
+<!--   ) + -->
+<!--   theme_minimal(base_size = 13) + -->
+<!--   theme(legend.position = "top") -->
+
+<!-- # (b) Distribution of P by group -->
+<!-- ggplot(snap_all, aes(x = P, fill = source)) + -->
+<!--   geom_density(alpha = 0.4) + -->
+<!--   facet_wrap(~ group) + -->
+<!--   scale_fill_manual(values = c("HELIUS data" = "grey20", -->
+<!--                                "Hybrid model" = "darkorange")) + -->
+<!--   labs( -->
+<!--     title = "Stationary precarity distribution: data vs hybrid model", -->
+<!--     x = "Precarity index P", -->
+<!--     y = "Density", -->
+<!--     fill = "" -->
+<!--   ) + -->
+<!--   theme_minimal(base_size = 13) + -->
+<!--   theme(legend.position = "top") -->
+
+<!-- # (c) Correlation + variance summary -->
+<!-- sim_targets <- snap_sim %>% -->
+<!--   group_by(group) %>% -->
+<!--   summarise( -->
+<!--     cor_P_m = cor(P, m), -->
+<!--     var_P   = var(P), -->
+<!--     .groups = "drop" -->
+<!--   ) %>% -->
+<!--   mutate(source = "Hybrid model") -->
+
+<!-- data_targets_short <- data_targets %>% -->
+<!--   select(group, cor_P_m, var_P) %>% -->
+<!--   mutate(source = "HELIUS data") -->
+
+<!-- targets_long <- bind_rows(sim_targets, data_targets_short) %>% -->
+<!--   tidyr::pivot_longer( -->
+<!--     cols      = c(cor_P_m, var_P), -->
+<!--     names_to  = "stat", -->
+<!--     values_to = "value" -->
+<!--   ) -->
+
+<!-- ggplot(targets_long, -->
+<!--        aes(x = stat, y = value, fill = source)) + -->
+<!--   geom_col(position = position_dodge(width = 0.6)) + -->
+<!--   facet_wrap(~ group) + -->
+<!--   scale_fill_manual(values = c("HELIUS data" = "grey20", -->
+<!--                                "Hybrid model" = "darkorange")) + -->
+<!--   labs( -->
+<!--     title = "Calibrated slow-layer moments: data vs model", -->
+<!--     x = "", -->
+<!--     y = "Value", -->
+<!--     fill = "" -->
+<!--   ) + -->
+<!--   theme_minimal(base_size = 13) + -->
+<!--   theme(legend.position = "top") -->
+
+<!-- ``` -->
+  
+  
+  
+  
+  
+  
+----------
+
+<!-- **(a) P–m cloud by group** -->
+
+<!-- ```{r} -->
+<!-- ggplot(snap_all, aes(x = P, y = m, color = source)) + -->
+<!--   geom_point(alpha = 0.25, size = 0.7) + -->
+<!--   geom_smooth(method = "loess", se = FALSE, linewidth = 0.8) + -->
+<!--   facet_wrap(~ group, scales = "free_x") + -->
+<!--   scale_color_manual(values = c("HELIUS data" = "black", -->
+<!--                                 "Hybrid model" = "darkorange")) + -->
+<!--   labs( -->
+<!--     title = "P–symptom relationship: data vs hybrid model", -->
+<!--     x = "Precarity index P", -->
+<!--     y = "Mean symptom activation m", -->
+<!--     color = "" -->
+<!--   ) + -->
+<!--   theme_minimal(base_size = 13) + -->
+<!--   theme(legend.position = "top") -->
+<!-- ``` -->
+
+<!-- **(b) Distribution of P by group** -->
+
+<!-- ```{r} -->
+<!-- ggplot(snap_all, aes(x = P, fill = source)) + -->
+<!--   geom_density(alpha = 0.4) + -->
+<!--   facet_wrap(~ group) + -->
+<!--   scale_fill_manual(values = c("HELIUS data" = "grey20", -->
+<!--                                "Hybrid model" = "darkorange")) + -->
+<!--   labs( -->
+<!--     title = "Stationary precarity distribution: data vs hybrid model", -->
+<!--     x = "Precarity index P", -->
+<!--     y = "Density", -->
+<!--     fill = "" -->
+<!--   ) + -->
+<!--   theme_minimal(base_size = 13) + -->
+<!--   theme(legend.position = "top") -->
+<!-- ``` -->
+
+<!-- **(c) Correlation + variance summary** -->
+
+<!-- ```{r} -->
+<!-- sim_targets <- snap_sim %>% -->
+<!--   group_by(group) %>% -->
+<!--   summarise( -->
+<!--     cor_P_m = cor(P, m), -->
+<!--     var_P   = var(P), -->
+<!--     .groups = "drop" -->
+<!--   ) %>% -->
+<!--   mutate(source = "Hybrid model") -->
+
+<!-- data_targets_short <- data_targets %>% -->
+<!--   select(group, cor_P_m, var_P) %>% -->
+<!--   mutate(source = "HELIUS data") -->
+
+<!-- targets_long <- bind_rows(sim_targets, data_targets_short) %>% -->
+<!--   tidyr::pivot_longer(cols = c(cor_P_m, var_P), -->
+<!--                       names_to = "stat", -->
+<!--                       values_to = "value") -->
+
+<!-- ggplot(targets_long, -->
+<!--        aes(x = stat, y = value, fill = source)) + -->
+<!--   geom_col(position = position_dodge(width = 0.6)) + -->
+<!--   facet_wrap(~ group) + -->
+<!--   scale_fill_manual(values = c("HELIUS data" = "grey20", -->
+<!--                                "Hybrid model" = "darkorange")) + -->
+<!--   labs( -->
+<!--     title = "Calibrated slow-layer moments: data vs model", -->
+<!--     x = "", -->
+<!--     y = "Value", -->
+<!--     fill = "" -->
+<!--   ) + -->
+<!--   theme_minimal(base_size = 13) + -->
+<!--   theme(legend.position = "top") -->
+<!-- ``` -->
+
+
+
+
+
+<!-- ### Step 2: Networks & links (pooled) -->
+
+<!-- 1. **Symptom network (fast layer):** -->
+
+<!--   * Fit Ising on binarized symptoms → adjacency ($W$), thresholds ($\theta$). -->
+<!--   * Spectral normalization of ($W$) (divide by spectral radius), optional shrink ($\in (0,1]$). -->
+
+<!-- 2. **Precarity→Symptoms ($\Gamma$):** -->
+
+<!--   * Z‑score precarity (globally). For each symptom, logistic regression on all z‑scored precarity variables. Stack coefficients → matrix ($\Gamma$). -->
+
+
+<!-- 3. **Symptoms→Precarity ($B$):** -->
+
+<!-- * For each **raw** precarity variable, OLS on the binarized symptoms. Stack coefficients → matrix (B). -->
+
+<!-- > These are shared by both groups and will remain fixed in simulation. -->
+
+
+
+
+
+<!-- ```{r, results='hide'} -->
+<!-- # --- 2.1 Binarize symptoms for Ising ---------------------------------------- -->
+<!-- S01_all <- data_cleaned %>% -->
+<!--   dplyr::select(all_of(symptom_vars)) %>% -->
+<!--   mutate(across(everything(), ~ as.integer(. >= 1))) %>% -->
+<!--   as.data.frame() -->
+
+<!-- # --- 2.2 Ising (pooled) ----------------------------------------------------- -->
+<!-- ising_fit <- IsingFit(S01_all, family = "binomial") -->
+<!-- W_raw <- ising_fit$weiadj -->
+<!-- theta <- ising_fit$thresholds -->
+
+<!-- # spectral radius normalize W (keeps nonlinearity tunable via beta) -->
+<!-- srW <- max(abs(eigen(W_raw, only.values = TRUE)$values)) -->
+<!-- W   <- if (is.finite(srW) && srW > 0) W_raw / srW else W_raw -->
+
+<!-- # --- 2.3 Γ: logistic each symptom ~ z-scored P ------------------------------- -->
+<!-- ZP_all <- scale(data_cleaned[, precarity_vars]) -->
+<!-- Gamma <- matrix(0, nrow = length(precarity_vars), ncol = length(symptom_vars), -->
+<!--                 dimnames = list(precarity_vars, symptom_vars)) -->
+<!-- for (s in symptom_vars) { -->
+<!--   frm <- as.formula(paste0(s, " ~ ", paste(precarity_vars, collapse = " + "))) -->
+<!--   dat <- cbind.data.frame(S = S01_all[[s]], as.data.frame(ZP_all)) -->
+<!--   names(dat)[1] <- s -->
+<!--   fit <- glm(frm, data = dat, family = binomial()) -->
+<!--   co  <- coef(fit)[precarity_vars]; co[is.na(co)] <- 0 -->
+<!--   Gamma[, s] <- co -->
+<!-- } -->
+
+<!-- # --- 2.4 B: OLS each raw precarity ~ binarized symptoms --------------------- -->
+<!-- B <- matrix(0, nrow = length(symptom_vars), ncol = length(precarity_vars), -->
+<!--             dimnames = list(symptom_vars, precarity_vars)) -->
+<!-- for (p in precarity_vars) { -->
+<!--   frm <- as.formula(paste0(p, " ~ ", paste(symptom_vars, collapse = " + "))) -->
+<!--   dat <- cbind.data.frame(data_cleaned[, p, drop = FALSE], S01_all) -->
+<!--   colnames(dat)[1] <- p -->
+<!--   fit <- lm(frm, data = dat) -->
+<!--   co  <- coef(fit)[symptom_vars]; co[is.na(co)] <- 0 -->
+<!--   B[, p] <- co -->
+<!-- } -->
+
+<!-- # flip Gamma -->
+<!-- Gamma <- t(Gamma)   # now Γ is (s × p) -->
+
+<!-- pooled <- list(W=W, theta=theta, Gamma=Gamma, B=B, -->
+<!--                symptom_vars=symptom_vars, precarity_vars=precarity_vars) -->
+
+<!-- ``` -->
+
+
+
+<!-- ### Step 3: Group‑specific slow layer (baselines + $A_p$) -->
+
+<!-- For each group (g \in {\text{Dutch, NonDutch}}): -->
+
+<!-- * **Baselines:** mean $\boldsymbol\mu_p^{(g)}$ and SD $\boldsymbol\sigma_p^{(g)}$ (raw units) for the precarity variables. -->
+
+<!-- * **Precarity network (slow coupling):** EBICglasso on *within‑group z‑scored* precarity → matrix $A_p^{(g)}$.  -->
+
+<!-- * **Drift knobs:** Mean‑reversion rate $\kappa^{(g)}$ and target $\mathbf P_*^{(g)}$. We parameterize $\mathbf P_*^{(g)}$ *in z‑units* via a vector $\mathbf z_*^{(g)}$, then convert to raw: $\mathbf P_*^{(g)} = \boldsymbol\mu_p^{(g)} + \mathbf z_*^{(g)}\odot \boldsymbol\sigma_p^{(g)}$. -->
+
+<!-- ```{r} -->
+<!-- # --- 3.1 Helper to compute A_p within group --------------------------------- -->
+<!-- fit_Ap_group <- function(df_group, precarity_vars, glasso_gamma = 0.5, shrink = 1.0){ -->
+<!--   Zp <- scale(df_group[, precarity_vars, drop=FALSE]) -->
+<!--   S  <- qgraph::cor_auto(Zp) -->
+<!--   Ap_raw <- qgraph::EBICglasso(S, n = nrow(df_group), gamma = glasso_gamma) -->
+<!--   # spectral norm to 1, optional shrink -->
+<!--   sp <- max(abs(eigen(Ap_raw, only.values = TRUE)$values)) -->
+<!--   Ap <- if (is.finite(sp) && sp > 0) (Ap_raw / sp) * shrink else Ap_raw -->
+<!--   Ap -->
+<!-- } -->
+
+<!-- # --- 3.2 Build group packs --------------------------------------------------- -->
+<!-- build_group_pack <- function(df_group, pooled, glasso_gamma=0.5, shrink_Ap=1.0){ -->
+<!--   mu <- sapply(pooled$precarity_vars, \(v) mean(df_group[[v]], na.rm = TRUE)) -->
+<!--   sd <- sapply(pooled$precarity_vars, \(v)   sd(df_group[[v]],   na.rm = TRUE)) -->
+<!--   sd[sd == 0] <- 1e-6 -->
+<!--   Ap <- fit_Ap_group(df_group, pooled$precarity_vars, glasso_gamma, shrink_Ap) -->
+<!--   list( -->
+<!--     mu_p = mu, sd_p = sd, Ap = Ap, -->
+<!--     W = pooled$W, theta = pooled$theta, -->
+<!--     Gamma = pooled$Gamma, B = pooled$B, -->
+<!--     symptom_vars = pooled$symptom_vars, precarity_vars = pooled$precarity_vars -->
+<!--   ) -->
+<!-- } -->
+
+<!-- by_group <- split(data_cleaned, data_cleaned$group) -->
+<!-- par_Dutch    <- build_group_pack(by_group$Dutch,    pooled, glasso_gamma=0.8, shrink_Ap=1.0) -->
+<!-- par_NonDutch <- build_group_pack(by_group$NonDutch, pooled, glasso_gamma=0.8, shrink_Ap=1.0) -->
+
+<!-- ``` -->
+
+
+<!-- ### Step 4: Dynamics we simulate -->
+
+<!-- Fast mean‑field (at each slow step): -->
+
+<!-- $$\mathbf m \leftarrow \sigma!\Big(\beta,(W,\mathbf m + \theta + \Gamma,\mathbf z_P)\Big),\quad \sigma(x)=\tfrac{1}{1+e^{-x}},\quad \mathbf z_P=\tfrac{\mathbf P-\boldsymbol\mu_p^{(g)}}{\boldsymbol\sigma_p^{(g)}}.$$ -->
+
+<!-- Slow SDE (Euler–Maruyama): -->
+
+<!-- $$\tfrac{d\mathbf P}{dt}= -\kappa^{(g)}(\mathbf P-\mathbf P_*^{(g)}); -; \alpha_{A_p}, D_{\sigma^{(g)}} A_p^{(g)},\mathbf z_P; +; B,\mathbf m; +; \sigma,\boldsymbol\xi(t),$$ -->
+
+<!-- where $D_{\sigma^{(g)}}=\operatorname{diag}(\boldsymbol\sigma_p^{(g)})$. We optionally rescale $A_p^{(g)}$ to keep the linear drift stable relative to $\kappa^{(g)}$. -->
+
+<!-- ```{r} -->
+<!-- inv_logit <- function(x) 1/(1+exp(-x)) -->
+
+<!-- fast_meanfield <- function(P_raw, par, beta = 2.2, m_init = NULL, n_iter = 40){ -->
+<!--   # z-score current P using THIS group's baselines -->
+<!--   zP <- (P_raw - par$mu_p) / par$sd_p -->
+<!--   theta_eff <- as.numeric(par$theta + par$Gamma %*% zP) -->
+<!--   s <- length(par$symptom_vars) -->
+<!--   m <- if (is.null(m_init)) rep(0.1, s) else pmin(pmax(m_init, 1e-6), 1-1e-6) -->
+<!--   for (k in seq_len(n_iter)){ -->
+<!--     m <- inv_logit(beta * (as.numeric(par$W %*% m) + theta_eff)) -->
+<!--     m <- pmin(pmax(m, 1e-6), 1-1e-6) -->
+<!--   } -->
+<!--   m -->
+<!-- } -->
+
+<!-- scale_Ap_for_stability <- function(Ap, kappa, margin = 0.9){ -->
+<!--   ev  <- eigen(Ap, only.values = TRUE)$values -->
+<!--   spr <- max(Re(ev)) -->
+<!--   if (!is.finite(spr) || spr <= 0) return(Ap) -->
+<!--   Ap * ((kappa * margin) / spr) -->
+<!-- } -->
+
+<!-- simulate_slowfast_meanfield <- function( -->
+<!--   par, -->
+<!--   kappa = 0.10,                # mean reversion -->
+<!--   zP_star = 0.0,               # target in z-units (scalar or length-p vector) -->
+<!--   T = 1000, dt = 0.2, -->
+<!--   beta = 2.2,                  # nonlinearity of fast layer -->
+<!--   sigma = 0.06,                # slow noise -->
+<!--   alpha_Ap = 0.8,              # weight of Ap drift (damping) -->
+<!--   n_fast = 50, seed = 1 -->
+<!-- ){ -->
+<!--   set.seed(seed) -->
+<!--   p <- length(par$precarity_vars); s <- length(par$symptom_vars) -->
+<!--   n_steps <- ceiling(T/dt) -->
+
+<!--   # prepare targets & stability -->
+<!--   z_star <- if (length(zP_star) == 1) rep(zP_star, p) else zP_star -->
+<!--   P_star <- par$mu_p + z_star * par$sd_p -->
+
+<!--   Dsd    <- diag(par$sd_p, p, p) -->
+<!--   Ap_stb <- scale_Ap_for_stability(par$Ap, kappa, margin=0.9) -->
+
+<!--   # storage -->
+<!--   P <- matrix(NA_real_, n_steps, p, dimnames = list(NULL, par$precarity_vars)) -->
+<!--   M <- matrix(NA_real_, n_steps, s, dimnames = list(NULL, par$symptom_vars)) -->
+
+<!--   # init at group mean -->
+<!--   P[1, ] <- par$mu_p -->
+<!--   m_prev <- rep(0.1, s) -->
+
+<!--   for (t in 2:n_steps){ -->
+<!--     # fast update -->
+<!--     m <- fast_meanfield(P[t-1, ], par, beta=beta, m_init=m_prev, n_iter=n_fast) -->
+<!--     M[t-1, ] <- m -->
+<!--     m_prev <- m -->
+
+<!--     # slow drift -->
+<!--     zP <- (P[t-1, ] - par$mu_p) / par$sd_p -->
+<!--     drift <- - kappa * (P[t-1, ] - P_star)                      # mean reversion -->
+<!--     drift <- drift - alpha_Ap * as.numeric(Dsd %*% (Ap_stb %*% zP))  # precarity coupling -->
+<!--     drift <- drift + as.numeric(par$B %*% m)                    # symptom push -->
+
+<!--     # step + noise -->
+<!--     P[t, ] <- P[t-1, ] + dt * drift + rnorm(p, 0, sigma * sqrt(dt)) -->
+<!--   } -->
+<!--   M[n_steps, ] <- m_prev -->
+<!--   list(P=P, M=M, dt=dt) -->
+<!-- } -->
+
+<!-- ``` -->
+
+
+
+<!-- ### Step 5. Simulate Dutch vs Non-Dutch and plot P(t) -->
+
+<!-- I picked parameters that give clear but not crazy separation: -->
+
+<!-- - Dutch: stronger mean reversion, neutral target -->
+
+<!-- - Non-Dutch: weaker mean reversion, higher target (consistent with descriptives) -->
+
+<!-- ```{r} -->
+<!-- # --- 5.1 Choose drift knobs -------------------------------------------------- -->
+<!-- BETA <- 2.4               # steeper fast response (tweak 2.2–3.2) -->
+<!-- KAPPA_D <- 0.10;  ZSTAR_D <- 0.00 -->
+<!-- KAPPA_N <- 0.06;  ZSTAR_N <- 0.40 -->
+<!-- SIGMA    <- 0.06 -->
+<!-- ALPHA_AP <- 0.8 -->
+<!-- DT       <- 0.2 -->
+<!-- HORIZON  <- 1200 -->
+
+<!-- # --- 5.2 Run sims ------------------------------------------------------------ -->
+<!-- sim_D <- simulate_slowfast_meanfield( -->
+<!--   par_Dutch,    kappa=KAPPA_D, zP_star=ZSTAR_D, -->
+<!--   T=HORIZON, dt=DT, beta=BETA, sigma=SIGMA, alpha_Ap=ALPHA_AP, n_fast=60, seed=11 -->
+<!-- ) -->
+<!-- sim_N <- simulate_slowfast_meanfield( -->
+<!--   par_NonDutch, kappa=KAPPA_N, zP_star=ZSTAR_N, -->
+<!--   T=HORIZON, dt=DT, beta=BETA, sigma=SIGMA, alpha_Ap=ALPHA_AP, n_fast=60, seed=22 -->
+<!-- ) -->
+
+<!-- # --- 5.3 Tidy and plot trajectories ----------------------------------------- -->
+<!-- df_D <- as.data.frame(sim_D$P) |> mutate(time = (row_number()-1)*DT, group="Dutch") -->
+<!-- df_N <- as.data.frame(sim_N$P) |> mutate(time = (row_number()-1)*DT, group="NonDutch") -->
+
+<!-- df_long <- bind_rows(df_D, df_N) |> -->
+<!--   pivot_longer(all_of(precarity_vars), names_to="variable", values_to="value") -->
+
+<!-- p_traj <- ggplot(df_long, aes(time, value, color=group)) + -->
+<!--   geom_line(linewidth=0.6, alpha=0.9) + -->
+<!--   facet_wrap(~ variable, ncol = 1, scales = "free_y") + -->
+<!--   scale_color_manual(values=c(Dutch="steelblue4", NonDutch="salmon2")) + -->
+<!--   labs(title="Precarity dynamics P(t) by variable", -->
+<!--        subtitle="Shared fast layer (W, Γ, B). Group-specific (μ, σ, A_p, κ, P*).", -->
+<!--        x="Time", y="Precarity (raw units)", color="Group") + -->
+<!--   theme_minimal(base_size = 12) + -->
+<!--   theme(legend.position="top", strip.text = element_text(face="bold")) -->
+<!-- p_traj -->
+<!-- ``` -->
+
+
+
+<!-- End-state densities (where trajectories “live” late in time) -->
+
+<!-- ```{r} -->
+<!-- tail_frac <- 0.25  # last 25% of time -->
+<!-- cut_D <- nrow(df_D) * (1 - tail_frac) -->
+<!-- cut_N <- nrow(df_N) * (1 - tail_frac) -->
+
+<!-- end_D <- df_D %>% slice((cut_D+1):n()) %>% pivot_longer(all_of(precarity_vars), "variable","value") %>% mutate(group="Dutch") -->
+<!-- end_N <- df_N %>% slice((cut_N+1):n()) %>% pivot_longer(all_of(precarity_vars), "variable","value") %>% mutate(group="NonDutch") -->
+<!-- end_long <- bind_rows(end_D, end_N) -->
+
+<!-- p_dens <- ggplot(end_long, aes(x=value, fill=group)) + -->
+<!--   geom_density(alpha=0.35, adjust=1.1) + -->
+<!--   facet_wrap(~ variable, scales="free", ncol=2) + -->
+<!--   scale_fill_manual(values=c(Dutch="steelblue4", NonDutch="salmon2")) + -->
+<!--   labs(title="End-state distributions of P(t) (last 25% of trajectory)", -->
+<!--        x=NULL, y="Density", fill="Group") + -->
+<!--   theme_minimal(base_size=12) + -->
+<!--   theme(legend.position="bottom", strip.text = element_text(face="bold")) -->
+<!-- p_dens -->
+
+<!-- ``` -->
+
+
+
+<!-- <!-- ```{r} --> -->
+<!-- <!-- data_cleaned <- data_cleaned %>% --> -->
+<!-- <!-- mutate(group = ifelse(PHQsum > 0, "Sick", "NonSick")) --> -->
+
+<!-- <!-- group_split <- list( --> -->
+<!-- <!-- NonSick = filter(data_cleaned, group == "NonSick"), --> -->
+<!-- <!-- Sick = filter(data_cleaned, group == "Sick") --> -->
+<!-- <!-- ) --> -->
+
+<!-- <!-- ``` --> -->
+
+<!-- <!-- ### Step 2: Fit shared W,Γ,B on z-scored precarity --> -->
+
+<!-- <!-- We z-score precarity (only) before fitting Γ and Aₚ. --> -->
+<!-- <!-- Symptoms are binarized (≥1 → 1, else 0) for the Ising fit. --> -->
+
+<!-- <!-- ```{r} --> -->
+<!-- <!-- # We z-score only precarity before estimating Γ (P->symptoms) and A_p (precarity GGM) --> -->
+<!-- <!-- data_for_fit <- data_cleaned  --> -->
+<!-- <!-- data_for_fit[precarity_vars] <- scale(data_for_fit[precarity_vars]) --> -->
+
+<!-- <!-- # --- Your make_group_params() should: --> -->
+<!-- <!-- # - binarize symptoms (>=1 -> 1) --> -->
+<!-- <!-- # - estimate W, theta (IsingFit on symptoms) --> -->
+<!-- <!-- # - estimate Γ (logistic: symptom ~ z-scored P) --> -->
+<!-- <!-- # - estimate B (linear: raw P ~ symptoms) --> -->
+<!-- <!-- # - estimate A_p (EBICglasso on z-scored P) --> -->
+<!-- <!-- source("working_funcs.R") --> -->
+
+<!-- <!-- GLASSO_GAMMA <- 1.0 --> -->
+<!-- <!-- SHRINK_W     <- 1.0 --> -->
+<!-- <!-- SHRINK_Ap    <- 1.0 --> -->
+<!-- <!-- SCALE_GAMMA  <- 1.0 --> -->
+<!-- <!-- SCALE_B      <- 1.0 --> -->
+
+<!-- <!-- par_all <- make_group_params( --> -->
+<!-- <!--   df_group       = data_for_fit, --> -->
+<!-- <!--   precarity_vars = precarity_vars, --> -->
+<!-- <!--   symptom_vars   = symptom_vars, --> -->
+<!-- <!--   glasso_gamma   = GLASSO_GAMMA, --> -->
+<!-- <!--   shrink_W       = SHRINK_W, --> -->
+<!-- <!--   shrink_Ap      = SHRINK_Ap, --> -->
+<!-- <!--   scale_Gamma    = SCALE_GAMMA, --> -->
+<!-- <!--   scale_B        = SCALE_B --> -->
+<!-- <!-- ) --> -->
+
+
+<!-- <!-- # Quick diagnostic --> -->
+<!-- <!-- print(round(par_all$Gamma,2)) --> -->
+<!-- <!-- print(round(par_all$B,2)) --> -->
+
+<!-- <!-- # visaulize nets --> -->
+<!-- <!-- par(mfrow=c(1,2)) --> -->
+<!-- <!-- qgraph(par_all$W, --> -->
+<!-- <!--        layout = "spring", --> -->
+<!-- <!--        labels = par_all$symptom_vars, --> -->
+<!-- <!--        theme = "colorblind", --> -->
+<!-- <!--        vsize = 8, --> -->
+<!-- <!--        title = paste("Symptom Network - all"), posCol = "deepskyblue4", negCol = "firebrick2")    --> -->
+
+<!-- <!-- qgraph(par_all$Ap, --> -->
+<!-- <!--        layout = "spring", --> -->
+<!-- <!--        labels = par_all$precarity_vars, --> -->
+<!-- <!--        theme = "colorblind", --> -->
+<!-- <!--        vsize = 8, --> -->
+<!-- <!--        title = paste("Precarity Network - all"), posCol = "darkseagreen", negCol = "firebrick2")     --> -->
+
+<!-- <!-- ``` --> -->
+
+
+
+
+<!-- <!-- ### Step 3: Step 3 — Reuse shared networks; add group baselines --> -->
+
+<!-- <!-- We keep W, θ, Aₚ, Γ, B from the pooled fit for both groups. --> -->
+<!-- <!-- Each group gets its own empirical means/SDs (raw units) for the 5 precarity variables, and its own $m⋆$ from symptom prevalence. --> -->
+
+<!-- <!-- ```{r} --> -->
+<!-- <!-- # Helper: attach group raw means/sds and m* --> -->
+<!-- <!-- group_pack <- function(df_group, pooled_par, precarity_vars, symptom_vars){ --> -->
+<!-- <!--   mu_p <- sapply(precarity_vars, \(v) mean(df_group[[v]], na.rm = TRUE)) --> -->
+<!-- <!--   sd_p <- sapply(precarity_vars, \(v)   sd(df_group[[v]],   na.rm = TRUE)) --> -->
+<!-- <!--   sd_p[sd_p == 0] <- 1e-6 --> -->
+
+<!-- <!--   # baseline symptom prevalence (proportion >=1) --> -->
+<!-- <!--   SYMPTOM_CUTOFF <- 1 --> -->
+<!-- <!--   m_star <- mean(colMeans(df_group[, symptom_vars] >= SYMPTOM_CUTOFF, na.rm = TRUE)) --> -->
+
+<!-- <!--   list( --> -->
+<!-- <!--     mu_p = mu_p, sd_p = sd_p, m_star = m_star, --> -->
+<!-- <!--     W = pooled_par$W, theta = pooled_par$theta, --> -->
+<!-- <!--     Gamma = pooled_par$Gamma, B = pooled_par$B, Ap = pooled_par$Ap, --> -->
+<!-- <!--     precarity_vars = precarity_vars, symptom_vars = symptom_vars --> -->
+<!-- <!--   ) --> -->
+<!-- <!-- } --> -->
+
+<!-- <!-- par_nonSick <- group_pack(group_split$NonSick, par_all, precarity_vars, symptom_vars) --> -->
+<!-- <!-- par_Sick    <- group_pack(group_split$Sick,    par_all, precarity_vars, symptom_vars) --> -->
+
+
+<!-- <!-- # Inspect the difference --> -->
+<!-- <!-- par_nonSick$m_star; par_nonSick$mu_p; par_nonSick$sd_p --> -->
+<!-- <!-- par_Sick$m_star; par_Sick$mu_p; par_Sick$sd_p --> -->
+<!-- <!-- ``` --> -->
+
+
+<!-- <!-- ### Step 4: Visibility scalers (so dynamics actually move) --> -->
+
+
+<!-- <!-- ```{r} --> -->
+<!-- <!-- # Tunable multipliers (start modest; increase if still too flat) --> -->
+
+<!-- <!-- BOOST_GAMMA <- 2.0  # precarity -> symptom --> -->
+<!-- <!-- BOOST_B     <- 2.0  # symptom   -> precarity --> -->
+<!-- <!-- BOOST_Ap    <- 1.5  # precarity GGM drift --> -->
+
+<!-- <!-- par_nonSick$Gamma <- par_nonSick$Gamma * BOOST_GAMMA --> -->
+<!-- <!-- par_Sick$Gamma    <- par_Sick$Gamma    * BOOST_GAMMA --> -->
+
+<!-- <!-- par_nonSick$B <- par_nonSick$B * BOOST_B --> -->
+<!-- <!-- par_Sick$B    <- par_Sick$B    * BOOST_B --> -->
+
+<!-- <!-- par_nonSick$Ap <- par_nonSick$Ap * BOOST_Ap --> -->
+<!-- <!-- par_Sick$Ap    <- par_Sick$Ap    * BOOST_Ap --> -->
+
+<!-- <!-- ``` --> -->
+
+
+
+<!-- <!-- ### Step 5: Fast layer = mean-field --> -->
+
+<!-- <!-- ```{r} --> -->
+<!-- <!-- inv_logit <- function(x) 1/(1+exp(-x)) --> -->
+
+<!-- <!-- fast_meanfield <- function(P_raw, par, beta = 1.2, m_init = NULL, n_iter = 25){ --> -->
+<!-- <!--   # z-score current P with this group's moments --> -->
+<!-- <!--   zP <- (P_raw - par$mu_p) / par$sd_p --> -->
+<!-- <!--   thetaP <- as.numeric(par$theta + par$Gamma %*% zP) --> -->
+
+<!-- <!--   m <- if (is.null(m_init)) rep(0.1, length(par$symptom_vars)) else pmax(pmin(m_init, 1 - 1e-6), 1e-6) --> -->
+<!-- <!--   for (k in seq_len(n_iter)) { --> -->
+<!-- <!--     m <- inv_logit(beta * (as.numeric(par$W %*% m) + thetaP)) --> -->
+<!-- <!--     m <- pmax(pmin(m, 1 - 1e-6), 1e-6) --> -->
+<!-- <!--   } --> -->
+<!-- <!--   m --> -->
+<!-- <!-- } --> -->
+
+
+<!-- <!-- ``` --> -->
+
+
+<!-- <!-- ### Step 6: Slow layer SDE (stable) --> -->
+
+<!-- <!-- The slow layer evolves according to --> -->
+
+
+<!-- <!-- $$ --> -->
+<!-- <!-- d\mathbf{P}_t= \underbrace{-\kappa(\mathbf{P}_t - \mathbf{P}^*)}_{\text{mean reversion}}-\underbrace{\alpha_{A_P}D_{\sigma_p}A_p\mathbf{zP}_t}_{\text{precarity coupling (damping)}}+\underbrace{B\mathbf{m}_t}_{\text{symptom push}}+\sigma d\mathbf{W}_t --> -->
+<!-- <!-- $$ --> -->
+
+
+<!-- <!-- ```{r} --> -->
+<!-- <!-- # Stability helper: shrink Ap so its largest eigenvalue is <= margin*kappa --> -->
+<!-- <!-- scale_Ap_for_stability <- function(Ap, kappa, margin = 0.9){ --> -->
+<!-- <!--   ev <- eigen(Ap, only.values = TRUE)$values --> -->
+<!-- <!--   sp <- max(Re(ev)) --> -->
+<!-- <!--   if (sp <= 0) return(Ap) --> -->
+<!-- <!--   Ap * ((kappa * margin) / sp) --> -->
+<!-- <!-- } --> -->
+
+<!-- <!-- simulate_slowfast_meanfield <- function( --> -->
+<!-- <!--   par, drift_pars, --> -->
+<!-- <!--   T = 6000, dt = 0.2, --> -->
+<!-- <!--   beta = 1.2, sigma = 0.10, --> -->
+<!-- <!--   alpha_Ap = 0.10,     # strength of Ap drift (damping) --> -->
+<!-- <!--   n_fast = 30, seed = 1 --> -->
+<!-- <!-- ){ --> -->
+<!-- <!--   set.seed(seed) --> -->
+<!-- <!--   p <- length(par$precarity_vars) --> -->
+<!-- <!--   s <- length(par$symptom_vars) --> -->
+<!-- <!--   n_steps <- ceiling(T/dt) --> -->
+
+<!-- <!--   # Precompute --> -->
+<!-- <!--   Dsd <- diag(par$sd_p, p, p) --> -->
+<!-- <!--   Ap_stable <- scale_Ap_for_stability(par$Ap, drift_pars$kappa, margin = 0.9) --> -->
+
+<!-- <!--   # Storage --> -->
+<!-- <!--   P <- matrix(NA_real_, n_steps, p, dimnames = list(NULL, par$precarity_vars)) --> -->
+<!-- <!--   M <- matrix(NA_real_, n_steps, s, dimnames = list(NULL, par$symptom_vars)) --> -->
+
+<!-- <!--   # Init at group means --> -->
+<!-- <!--   P[1, ] <- par$mu_p --> -->
+<!-- <!--   m_prev <- rep(0.1, s) --> -->
+
+<!-- <!--   # Convert z-offset P* to raw vector --> -->
+<!-- <!--   P_star_raw <- par$mu_p + drift_pars$P_star * par$sd_p --> -->
+
+<!-- <!--   for (t in 2:n_steps) { --> -->
+<!-- <!--     # --- fast step --> -->
+<!-- <!--     m <- fast_meanfield(P[t-1, ], par, beta = beta, m_init = m_prev, n_iter = n_fast) --> -->
+<!-- <!--     M[t-1, ] <- m --> -->
+<!-- <!--     m_prev <- m --> -->
+
+<!-- <!--     # --- slow step --> -->
+<!-- <!--     zP  <- (P[t-1, ] - par$mu_p) / par$sd_p --> -->
+<!-- <!--     drift <- - drift_pars$kappa * (P[t-1, ] - P_star_raw)               # mean reversion --> -->
+<!-- <!--     drift <- drift - alpha_Ap * as.numeric(Dsd %*% (Ap_stable %*% zP))   # precarity coupling --> -->
+<!-- <!--     drift <- drift + as.numeric(par$B %*% m)                             # symptom push --> -->
+
+<!-- <!--     # step + noise --> -->
+<!-- <!--     P[t, ] <- P[t-1, ] + dt * drift + rnorm(p, 0, sigma * sqrt(dt)) --> -->
+<!-- <!--   } --> -->
+
+<!-- <!--   M[n_steps, ] <- m_prev --> -->
+<!-- <!--   list(P = P, M = M, dt = dt) --> -->
+<!-- <!-- } --> -->
+
+
+
+<!-- <!-- ``` --> -->
+
+
+<!-- <!-- #### Drift knobs (per group): --> -->
+
+<!-- <!-- ```{r} --> -->
+<!-- <!-- BETA <- 3.0  # fast layer inverse temperature --> -->
+
+<!-- <!-- pars_nonSick <- list( --> -->
+<!-- <!--   kappa  = 0.10,   # stronger pull to baseline --> -->
+<!-- <!--   P_star = 0.0     # revert to group mean --> -->
+<!-- <!--   # m_star unused in pure mean-field --> -->
+<!-- <!-- ) --> -->
+
+<!-- <!-- pars_Sick <- list( --> -->
+<!-- <!--   kappa  = 0.05,   # weaker mean reversion (more persistent) --> -->
+<!-- <!--   P_star = 0.5     # target a higher-than-mean precarity (in z-units) --> -->
+<!-- <!-- ) --> -->
+
+<!-- <!-- ``` --> -->
+
+
+<!-- <!-- ```{r} --> -->
+<!-- <!-- ## Diagnostic ##  --> -->
+
+<!-- <!-- # 1D frozen curve using empirical networks --> -->
+<!-- <!-- frozen_scan <- function(P_grid, par, beta=BETA){ --> -->
+<!-- <!--   v <- rep(1/sqrt(length(par$precarity_vars)), length(par$precarity_vars)) --> -->
+<!-- <!--   names(v) <- par$precarity_vars --> -->
+<!-- <!--   dir_raw <- par$sd_p * v --> -->
+<!-- <!--   out <- lapply(P_grid, function(s){ --> -->
+<!-- <!--     P_raw <- par$mu_p + s * dir_raw --> -->
+<!-- <!--     m <- fast_meanfield(P_raw, par, beta = beta, n_iter = 40) --> -->
+<!-- <!--     c(P = s, mbar = mean(m)) --> -->
+<!-- <!--   }) --> -->
+<!-- <!--   tibble::as_tibble(do.call(rbind, out)) --> -->
+<!-- <!-- } --> -->
+<!-- <!-- Pgrid <- seq(-5, 5, length.out = 81) --> -->
+<!-- <!-- fc_non <- frozen_scan(Pgrid, par_nonSick, beta = BETA) |> dplyr::mutate(group="NonSick") --> -->
+<!-- <!-- fc_sick<- frozen_scan(Pgrid, par_Sick,    beta = BETA) |> dplyr::mutate(group="Sick") --> -->
+<!-- <!-- ggplot(dplyr::bind_rows(fc_non, fc_sick), aes(P, mbar, color=group)) + --> -->
+<!-- <!--   geom_line(size=1) + labs(title="Frozen fast layer m̄(P)", y="Mean symptom level", x="P (1D projection)") + --> -->
+<!-- <!--   theme_minimal(base_size = 12) --> -->
+
+<!-- <!-- ``` --> -->
+
+
+
+<!-- <!-- ### Step 7: Run & visualize --> -->
+
+<!-- <!-- ```{r} --> -->
+<!-- <!-- set.seed(2025) --> -->
+<!-- <!-- sim_nonSick <- simulate_slowfast_meanfield( --> -->
+<!-- <!--   par_nonSick, pars_nonSick, --> -->
+<!-- <!--   T = 1000, dt = 0.2, --> -->
+<!-- <!--   beta = BETA, sigma = 0.05, alpha_Ap = 0.9, n_fast = 50 --> -->
+<!-- <!-- ) --> -->
+
+<!-- <!-- sim_Sick <- simulate_slowfast_meanfield( --> -->
+<!-- <!--   par_Sick, pars_Sick, --> -->
+<!-- <!--   T = 1000, dt = 0.2, --> -->
+<!-- <!--   beta = BETA, sigma = 0.05, alpha_Ap = 0.9, n_fast = 50 --> -->
+<!-- <!-- ) --> -->
+
+<!-- <!-- # Tidy for ggplot --> -->
+<!-- <!-- df_non <- as.data.frame(sim_nonSick$P) |> mutate(time = row_number(), group = "NonSick") --> -->
+<!-- <!-- df_sick<- as.data.frame(sim_Sick$P)    |> mutate(time = row_number(), group = "Sick") --> -->
+<!-- <!-- df_long <- bind_rows(df_non, df_sick) |> --> -->
+<!-- <!--   pivot_longer(all_of(precarity_vars), names_to = "variable", values_to = "value") --> -->
+
+<!-- <!-- ggplot(df_long, aes(time, value, color = group)) + --> -->
+<!-- <!--   geom_line(linewidth = 0.6, alpha = 0.9) + --> -->
+<!-- <!--   facet_wrap(~ variable, ncol = 1, scales = "free_y") + --> -->
+<!-- <!--   scale_color_manual(values = c("NonSick" = "steelblue", "Sick" = "tomato")) + --> -->
+<!-- <!--   labs(title = "Precarity dynamics by variable", --> -->
+<!-- <!--        subtitle = "Mean-field slow–fast model | HELIUS (pooled W,Γ,B; group-specific A_p, μ_p, σ_p)", --> -->
+<!-- <!--        x = "Time step", y = "Precarity (raw units)", color = "Group") + --> -->
+<!-- <!--   theme_minimal(base_size = 12) + --> -->
+<!-- <!--   theme(legend.position = "top", strip.text = element_text(face = "bold")) --> -->
+
+<!-- <!-- ``` --> -->
+
+
+
+
+
+
+

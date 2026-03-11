@@ -1,0 +1,1811 @@
+---
+title: "Slow–Fast Hybrid Model: 0/1 Curie–Weiss Symptoms & Precarity"
+author: "Kyuri Park"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    theme: cosmo
+execute:
+  warning: false
+  message: false
+  cache: true
+---
+
+```{r}
+#| label: setup
+#| include: true
+
+## Core libraries
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(tibble)
+library(ggplot2)
+
+## Parallelisation
+library(future)
+library(furrr)
+
+## For graphical abstract layout
+library(patchwork)
+
+theme_set(theme_minimal(base_size = 13))
+
+## Logistic helper
+inv_logit <- function(x) 1/(1 + exp(-x))
+
+## Parallel backend
+plan(multisession, workers = max(1, parallel::detectCores() - 1))
+```
+
+---
+
+# 1. Motivation
+
+Mental health symptoms fluctuate on fast time scales (hours–days), while
+socio-economic pressures such as financial precarity, discrimination, or
+workload change more slowly (months–years). Standard symptom-network models:
+
+* treat symptoms as a *closed* system,
+* interpret group differences in network structure as *internal differences*.
+
+Here we explicitly couple:
+
+* a *fast 0/1 Curie–Weiss symptom layer* (binary symptoms with mean-field interaction),
+* a *slow precarity variable* ($P_t$) that drifts gradually,
+* *feedback* from symptoms back into precarity.
+
+We show how **group differences in symptom trajectories** can arise purely from:
+
+* different **precarity baselines** and
+* different **feedback strengths**,
+
+with **identical** fast-layer parameters.
+
+We examine:
+
+* **Scenario A**: Weakly nonlinear fast layer (no bistability).
+* **Scenario B**: Strongly nonlinear fast layer with bistability; precarity almost fixed around different baselines.
+* **Scenario C1**: Same bistable fast layer + strong two-way feedback → catastrophic drift into high-symptom regime.
+* **Scenario C2**: Same bistable fast layer + moderate feedback + noise → episodic flipping in and out of high-symptom regime.
+
+---
+
+# 2. Fast layer: 0/1 Curie–Weiss symptoms
+
+We use a Curie–Weiss-type model with spins
+
+$$
+s_i \in {0, 1}.
+$$
+
+The mean symptom activation is
+
+$$
+m = \frac{1}{N}\sum_i s_i \in [0,1].
+$$
+
+The local “field” for a node is
+
+$$
+H = J(m - \tfrac{1}{2}) + h_0 + \gamma_P P.
+$$
+
+We then update spins with a logistic rule:
+
+$$
+\Pr(s_i = 1 \mid m, P) = \sigma\big(\beta H\big)
+= \frac{1}{1 + e^{-\beta H}}.
+$$
+
+For large enough $\beta J$ (specifically $\beta J > 4$) this mean-field system
+is **bistable** for an intermediate range of $P$.
+
+```{r}
+#| label: fast-layer
+#| include: true
+
+# One fast update block for 0/1 Curie–Weiss Ising layer
+# s in {0,1}; P is current precarity
+ising_fast_step01 <- function(
+  P,
+  s,
+  beta   = 1.0,
+  J      = 1.0,
+  h0     = 0.0,
+  gammaP = 0.5,
+  sweeps = 30
+){
+  n <- length(s)  # spins in {0,1}
+  
+  for (sw in seq_len(sweeps)) {
+    m <- mean(s)  # mean activation in [0,1]
+    
+    # field for this mean-field model
+    H <- J * (m - 0.5) + h0 + gammaP * P
+    p <- inv_logit(beta * H)
+    
+    # update spins
+    for (u in seq_len(n)) {
+      i    <- sample.int(n, 1)
+      s[i] <- rbinom(1, 1, p)
+    }
+  }
+  s
+}
+```
+
+---
+
+# 3. Slow layer: precarity dynamics
+
+The slow variable $P_t$ evolves with:
+
+* **mean reversion** to group-specific baseline $P_{\text{base}}$,
+* **feedback from symptoms** through a slowly evolving average $m_{\text{slow}}$,
+* **Gaussian noise**.
+
+Discrete-time dynamics (Euler–Maruyama):
+
+$$
+m_{\text{slow}, t+1} = m_{\text{slow}, t} + \lambda_m (m_t - m_{\text{slow}, t}),
+$$
+
+$$
+  P_{t+1} = P_t + dt\left[-\kappa(P_t - P_{\text{base}}) + b(m_{\text{slow}, t} - m_*)\right] + \sigma_P\sqrt{dt},\epsilon_t.
+$$
+
+```{r}
+#| label: slowfast
+#| include: true
+
+simulate_slowfast_cw01 <- function(
+  T_steps = 4000,
+  dt      = 0.02,
+  P_base  = 0,
+  P0      = 0,
+  m0      = 0.1,     # initial mean in [0,1]
+  kappa   = 0.2,
+  b       = 0.3,
+  m_star  = 0.3,
+  sigmaP  = 0.03,
+  lambda_m = 0.003,
+  # fast layer params
+  n_nodes = 100,
+  sweeps  = 30,
+  beta    = 1.0,
+  J       = 1.0,
+  h0      = 0.0,
+  gammaP  = 0.5,
+  seed    = 1
+){
+  set.seed(seed)
+  
+  P      <- numeric(T_steps)
+  m_fast <- numeric(T_steps)
+  m_slow <- numeric(T_steps)
+  
+  P[1]      <- P0
+  m_fast[1] <- m0
+  m_slow[1] <- m0
+  
+  # initial spins in {0,1}
+  s <- rbinom(n_nodes, 1, m0)
+  
+  for (t in 1:(T_steps - 1)) {
+    # --- fast update ---
+    s <- ising_fast_step01(
+      P      = P[t],
+      s      = s,
+      beta   = beta,
+      J      = J,
+      h0     = h0,
+      gammaP = gammaP,
+      sweeps = sweeps
+    )
+    
+    m_fast[t] <- mean(s)
+    
+    # --- slow moving average of symptoms ---
+    m_slow[t+1] <- m_slow[t] + lambda_m * (m_fast[t] - m_slow[t])
+    
+    # --- slow precarity drift ---
+    drift <- -kappa * (P[t] - P_base) + b * (m_slow[t] - m_star)
+    P[t+1] <- P[t] + dt * drift + rnorm(1, 0, sigmaP * sqrt(dt))
+  }
+  
+  # final fast snapshot for plotting
+  m_fast[T_steps] <- m_fast[T_steps - 1]
+  
+  tibble(
+    t      = 1:T_steps,
+    P      = P,
+    m      = m_fast,
+    m_slow = m_slow
+  )
+}
+```
+
+---
+
+# 4. Mean-field bifurcation of the 0/1 Curie–Weiss layer
+
+For 0/1 spins, the mean-field fixed point satisfies:
+
+$$
+m = \sigma\left(\beta\left[J(m - \tfrac{1}{2}) + h_0 + \gamma_P P\right]\right).
+$$
+
+We solve this numerically and classify stability via
+
+$$
+\frac{df}{dm}
+= \beta J \sigma(H)\big(1 - \sigma(H)\big) - 1,
+\quad H = J(m - 1/2) + h_0 + \gamma_P P.
+$$
+
+```{r}
+#| label: bifurcation
+#| include: true
+
+cw01_fixed_points <- function(P, beta, J, h0, gammaP){
+  f <- function(m) inv_logit(beta * (J*(m - 0.5) + h0 + gammaP*P)) - m
+  
+  df <- function(m){
+    p <- inv_logit(beta * (J*(m - 0.5) + h0 + gammaP*P))
+    beta * J * p * (1 - p) - 1
+  }
+  
+  grid <- seq(0, 1, length.out = 801)
+  vals <- f(grid)
+  idx  <- which(diff(sign(vals)) != 0)
+  
+  roots <- c()
+  for (k in idx) {
+    r <- try(uniroot(f, c(grid[k], grid[k+1]))$root, silent = TRUE)
+    if (!inherits(r, "try-error")) roots <- c(roots, r)
+  }
+  roots <- sort(unique(round(roots, 6)))
+  if (!length(roots)) return(NULL)
+  
+  tibble(
+    P      = P,
+    m      = roots,
+    stable = df(roots) < 0
+  )
+}
+
+cw01_bifurcation_curve <- function(P_grid, beta, J, h0, gammaP){
+  map_dfr(P_grid, ~ cw01_fixed_points(.x, beta, J, h0, gammaP))
+}
+
+## Parameters for strongly nonlinear fast layer (used in B, C)
+beta_BC   <- 2.0
+J_BC      <- 3.0    # beta*J = 6 > 4 → bistability possible
+h0_BC     <- 0.0
+gammaP_BC <- 1.0
+
+P_grid_BC <- seq(-2, 2, length.out = 400)
+
+bf_BC <- cw01_bifurcation_curve(P_grid_BC, beta_BC, J_BC, h0_BC, gammaP_BC)
+
+stab_by_P <- bf_BC %>%
+  filter(stable) %>%
+  group_by(P) %>%
+  summarise(n_stable = n(),
+            m_low  = min(m),
+            m_high = max(m),
+            .groups = "drop")
+
+bistable_window <- stab_by_P %>%
+  filter(n_stable == 2)
+
+if (nrow(bistable_window) > 0) {
+  P_low_fold  <- min(bistable_window$P)
+  P_high_fold <- max(bistable_window$P)
+} else {
+  # fallback values so script never breaks
+  P_low_fold  <- -0.5
+  P_high_fold <-  0.5
+}
+
+cat(
+  "Bistable P-window (fast layer): [",
+  round(P_low_fold, 2), ", ",
+  round(P_high_fold, 2), "]\n", sep = ""
+)
+
+ggplot() +
+  {
+    if (nrow(bistable_window) > 0)
+      geom_ribbon(
+        data = bistable_window,
+        aes(x = P, ymin = m_low, ymax = m_high),
+        fill = "grey85", alpha = 0.6
+      )
+  } +
+  geom_line(
+    data = bf_BC %>% filter(!stable),
+    aes(P, m),
+    linetype = "dashed", colour = "grey60"
+  ) +
+  geom_line(
+    data = bf_BC %>% filter(stable, m < 0.5),
+    aes(P, m, colour = "Low branch"),
+    linewidth = 1
+  ) +
+  geom_line(
+    data = bf_BC %>% filter(stable, m >= 0.5),
+    aes(P, m, colour = "High branch"),
+    linewidth = 1
+  ) +
+  scale_color_manual(values = c("Low branch" = "#4E79A7",
+                                "High branch" = "#E15759"),
+                     name = NULL) +
+  labs(
+    title = "Bifurcation diagram of fast 0/1 Curie–Weiss layer",
+    subtitle = "Grey band: bistable P-region (two stable m-values)",
+    x = "Precarity P",
+    y = "Mean symptom activation m"
+  ) +
+  theme_minimal(base_size = 13)
+```
+
+---
+
+# 5. Parallel helper: simulate low vs high groups
+
+```{r}
+#| label: parallel-helper
+#| include: true
+
+run_scenario_parallel <- function(
+  par_fast,
+  par_slow,
+  P_bases,
+  labels,
+  T_steps,
+  seeds
+){
+  stopifnot(length(P_bases) == length(labels),
+            length(labels)  == length(seeds))
+  
+  param_list <- pmap(
+    list(P_base = P_bases,
+         label  = labels,
+         seed   = seeds),
+    function(P_base, label, seed){
+      list(
+        args = c(
+          list(
+            T_steps = T_steps,
+            P_base  = P_base,
+            P0      = P_base,
+            m0      = 0.1,
+            seed    = seed
+          ),
+          par_fast,
+          par_slow
+        ),
+        meta = list(group = label)
+      )
+    }
+  )
+  
+  sim_list <- future_map(
+    param_list,
+    function(cfg){
+      out <- do.call(simulate_slowfast_cw01, cfg$args)
+      out$group <- cfg$meta$group
+      out
+    },
+    .progress = FALSE
+  )
+  
+  bind_rows(sim_list)
+}
+```
+
+---
+
+# 6. Scenario A – Weakly nonlinear, no bistability
+
+* Parameter setting:
+
+  - Fast layer: low coupling → βJ < 4 → no bistability.
+
+  - Slow layer: moderate mean reversion.
+
+  - Groups only differ in $P_{base}$.
+
+
+* Mechanics: The Curie–Weiss activation function is shallow and unimodal. For any value of precarity $P_t$, the fast layer quickly relaxes to a single equilibrium $m^*(P)$.
+
+Thus:
+  
+$$
+    P_{\text{low}} < P_{\text{high}}
+    \quad\Rightarrow\quad
+    m_{\text{low}} < m_{\text{high}},
+$$
+
+but the relationship is nearly linear and weak.
+
+```{r}
+#| label: scenario-A
+#| include: true
+
+par_fast_A <- list(
+  n_nodes = 100,
+  sweeps  = 20,
+  beta    = 1.0,
+  J       = 2.5,   # beta*J = 2.5 < 4 ⇒ no bistability
+  h0      = -0.2,
+  gammaP  = 0.8
+)
+
+par_slow_A <- list(
+  dt       = 0.02,
+  kappa    = 0.30,
+  b        = 0.20,
+  m_star   = 0.10,
+  sigmaP   = 0.10,
+  lambda_m = 0.001
+)
+
+P_bases_A <- c(-0.8, 0.8)
+labels_2  <- c("Low precarity", "High precarity")
+
+sim_A <- run_scenario_parallel(
+  par_fast = par_fast_A,
+  par_slow = par_slow_A,
+  P_bases  = P_bases_A,
+  labels   = labels_2,
+  T_steps  = 3000,
+  seeds    = c(1, 2)
+) %>%
+  mutate(scenario = "A")
+
+sim_A_long <- sim_A %>%
+  select(t, P, m, group) %>%
+  pivot_longer(c(P, m),
+               names_to = "variable",
+               values_to = "value")
+
+ggplot(sim_A_long, aes(t, value, colour = group)) +
+  geom_line(alpha = 0.8, linewidth = 0.5) +
+  facet_wrap(~ variable, scales = "free_y", ncol = 1) +
+  scale_color_manual(values = c("Low precarity" = "#4E79A7",
+                                "High precarity" = "#E15759")) +
+  labs(
+    title    = "Scenario A – Weakly nonlinear (no bistability)",
+    subtitle = "Groups differ mainly in P and m means; no regime switching.",
+    x = "Time step", y = "Value", colour = ""
+  )
+```
+
+
+* Interpretation:
+  
+  * Groups differ only in their mean levels of precarity and symptoms.
+  * There is no regime switching, no nonlinear amplification, and no hysteresis.
+  * This scenario behaves like a standard stress → symptoms regression model.
+
+* What the simulation shows:
+  
+  * Two gently-separated trajectories.
+  * Symptom levels do not jump or bifurcate.
+  * This scenario is the “null model” of slow–fast coupling.
+  
+---
+
+# 7. Scenario B – Bistable fast layer, P almost fixed
+
+
+* Parameter setting:
+  
+  * Fast layer: βJ > 4 → *bistability* (two stable symptom equilibria).
+  * Slow layer: *strong mean reversion* ($κ$ large) → $P$ remains near its baseline.
+  * Groups differ only in $P_{\text{base}}$.
+
+* Mechanics:  Because the fast layer is bistable, the bifurcation diagram contains two stable branches:
+  
+  * low-symptom attractor $m_{\text{low}}(P)$
+  * high-symptom attractor $m_{\text{high}}(P)$
+
+If a group’s baseline precarity lies:
+  
+* *below the bistable window* → they fall into the *low-m* basin
+* *above the bistable window* → they fall into the *high-m* basin
+
+But because $κ$ is large, each group’s $P_t$ barely moves from its baseline — they remain “locked” on their respective branches.
+
+```{r}
+#| label: scenario-B
+#| include: true
+
+par_fast_B <- list(
+  n_nodes = 100,
+  sweeps  = 40,
+  beta    = beta_BC,
+  J       = J_BC,
+  h0      = h0_BC,
+  gammaP  = gammaP_BC
+)
+
+par_slow_B <- list(
+  dt       = 0.02,
+  kappa    = 0.50,  # strong mean reversion
+  b        = 0.08,  # weak symptom → P feedback
+  m_star   = 0.10,
+  sigmaP   = 0.10,
+  lambda_m = 0.001
+)
+
+P_bases_B <- c(P_low_fold - 0.6, P_high_fold + 0.6)
+
+sim_B <- run_scenario_parallel(
+  par_fast = par_fast_B,
+  par_slow = par_slow_B,
+  P_bases  = P_bases_B,
+  labels   = labels_2,
+  T_steps  = 3000,
+  seeds    = c(3, 4)
+) %>%
+  mutate(scenario = "B")
+
+sim_B_long <- sim_B %>%
+  select(t, P, m, group) %>%
+  pivot_longer(c(P, m),
+               names_to = "variable",
+               values_to = "value")
+
+ggplot(sim_B_long, aes(t, value, colour = group)) +
+  geom_line(alpha = 0.8, linewidth = 0.5) +
+  facet_wrap(~ variable, scales = "free_y", ncol = 1) +
+  scale_color_manual(values = c("Low precarity" = "#4E79A7",
+                                "High precarity" = "#E15759")) +
+  labs(
+    title    = "Scenario B – Bistable fast layer, P nearly fixed",
+    subtitle = "Low group in low-m branch, high group in high-m branch of the same fast network.",
+    x = "Time step", y = "Value", colour = ""
+  )
+```
+
+* Interpretation:
+  
+  * Even though both groups share the same symptom network, they occupy different stable symptom equilibria.
+  * The difference is *not in the network*, but in *where slow external conditions place the system on the bifurcation diagram*.
+
+This is the tipping-point explanation of group differences: Small differences in slow socioeconomic conditions push groups into different attractors of the same symptom system.
+  
+* Simulation output:
+  
+  * Two flat symptom trajectories: one low, one high.
+  * No switching or noise-driven episodes.
+  * A clean demonstration of *structural separation* due to slow baselines.
+  
+---
+
+# 8. Scenario C – Bistability + strong two-way feedback
+
+We keep the same **bistable fast layer** (`par_fast_B`) but weaken mean reversion and/or increase feedback and noise so that $P_t$ can wander through the bistable region.
+
+We consider:
+
+* **C1**: Catastrophic drift into high-symptom regime.
+* **C2**: Episodic flipping in and out of the high-symptom basin.
+
+
+## 8.1 Scenario C1 – Catastrophic flip
+
+* Parameter setting:
+  
+  * Same bistable fast layer as Scenario B.
+  * Slow layer:
+  
+    * weak mean reversion ($κ$ small)
+    * strong symptom feedback ($b$ large)
+    * low noise
+
+* Mechanics:
+  
+  Here $P_t$ can drift far from $P_{\text{base}}$. If symptoms rise slightly, strong feedback pushes precarity upward:
+  
+$$
+    m_{\text{slow}} \uparrow \quad\Rightarrow\quad P \uparrow.
+$$
+
+This, in turn, shifts the fast layer's field upward, which increases m — creating a *positive feedback loop*.
+
+If $P$ crosses the *upper fold* of the bifurcation diagram, the low-m state disappears and the system collapses into the high-symptom branch (“catastrophe”).
+
+```{r}
+#| label: scenario-C1
+#| include: true
+
+par_fast_C <- par_fast_B   # same bistable fast layer as Scenario B
+
+# C1: weak pullback, strong positive feedback, moderate noise
+par_slow_C1 <- list(
+  dt       = 0.02,
+  kappa    = 0.20,
+  b        = 0.25,
+  m_star   = 0.15,
+  sigmaP   = 0.10,
+  lambda_m = 0.001
+)
+
+P_bases_C1 <- c(P_low_fold - 0.6, (P_low_fold + P_high_fold)/2)
+
+sim_C1 <- run_scenario_parallel(
+  par_fast = par_fast_C,
+  par_slow = par_slow_C1,
+  P_bases  = P_bases_C1,
+  labels   = labels_2,
+  T_steps  = 5000,
+  seeds    = c(21, 22)
+) %>% mutate(scenario = "C1")
+
+sim_C1_long <- sim_C1 %>%
+  select(t, P, m, group) %>%
+  pivot_longer(c(P, m),
+               names_to  = "variable",
+               values_to = "value")
+
+ggplot(sim_C1_long, aes(t, value, colour = group)) +
+  geom_line(alpha = 0.8, linewidth = 0.5) +
+  facet_wrap(~ variable, scales = "free_y", ncol = 1) +
+  scale_color_manual(values = c("Low precarity" = "#4E79A7",
+                                "High precarity" = "#E15759")) +
+  labs(
+    title    = "Scenario C1 – Catastrophic drift into high-symptom regime",
+    subtitle = "Low group remains in low-m region; high group is pushed above the upper fold and stays high-m.",
+    x = "Time step", y = "Value", colour = ""
+  )
+```
+
+
+*Interpretation:
+  
+  * A group with moderately elevated precarity can experience *runaway escalation* into a chronic high-symptom regime.
+  * Once the upper basin is entered, symptoms remain persistently high.
+
+  This demonstrates a *mechanistic route to chronicity* under high precarity + high feedback.
+
+* Simulation output:
+
+  * Low group stays stable.
+  * High group shows a *sharp transition* into the high $m$ basin and remains there.
+  * $P_t$ drifts upward, never returning.
+
+
+
+---
+
+## 8.2 Scenario C2 – Episodic flips up and down
+
+*Parameter setting:
+  
+  * *(moderate κ, moderate b, higher noise → stochastic switching)*
+  * Same bistable fast layer.
+  * Slow layer:
+
+    * *weaker* positive feedback,
+    * *stronger mean reversion*,
+    * *higher noise σₚ*.
+
+* Mechanics:
+
+$P$ fluctuates near the *bistable region*, occasionally being nudged above or below fold points by noise.
+Crossing a fold forces the system into the opposite symptom branch:
+
+$$
+\text{cross lower fold} \Rightarrow m_{\text{high}} \to m_{\text{low}}
+$$
+$$
+\text{cross upper fold} \Rightarrow m_{\text{low}} \to m_{\text{high}}
+$$
+
+Because $κ$ is stronger here, P often drifts back, allowing *repeated entries and exits* from the high-symptom basin.
+
+
+```{r}
+#| label: scenario-C2
+#| include: true
+
+# C2: episodic flipping – equilibria for low/high m sit inside the bistable window
+par_slow_C2 <- list(
+  dt       = 0.02,
+  kappa    = 0.30,  # stronger pullback than C1
+  b        = 0.15,  # weaker symptom -> P feedback
+  m_star   = 0.30,  # symptoms have to be quite high to push P up a lot
+  sigmaP   = 0.15,  # fairly big noise so P can cross folds
+  lambda_m = 0.001
+)
+
+P_bases_C2 <- c(P_low_fold - 0.8,
+                (P_low_fold + P_high_fold)/2)
+
+sim_C2 <- run_scenario_parallel(
+  par_fast = par_fast_C,
+  par_slow = par_slow_C2,
+  P_bases  = P_bases_C2,
+  labels   = labels_2,
+  T_steps  = 6000,
+  seeds    = c(31, 32)
+) %>%
+  mutate(scenario = "C2")
+
+sim_C2_long <- sim_C2 %>%
+  select(t, P, m, group) %>%
+  pivot_longer(c(P, m),
+               names_to  = "variable",
+               values_to = "value")
+
+ggplot(sim_C2_long, aes(t, value, colour = group)) +
+  geom_line(alpha = 0.8, linewidth = 0.5) +
+  facet_wrap(~ variable, scales = "free_y", ncol = 1) +
+  scale_color_manual(values = c("Low precarity"  = "#4E79A7",
+                                "High precarity" = "#E15759")) +
+  labs(
+    title    = "Scenario C2 – Episodic flipping in and out of high-symptom regime",
+    subtitle = "High group hovers in the bistable window and occasionally flips up to high m and back down.",
+    x = "Time step", y = "Value", colour = ""
+  )
+```
+
+---
+
+# 9. Multi-replicate simulations (A, B, C1, C2)
+
+Now we run *multiple stochastic replicates* per scenario and group to see how
+robust the qualitative behaviour is.
+
+```{r}
+#| label: scenario-config
+
+scenario_config <- function(scenario){
+  switch(
+    scenario,
+    "A" = list(
+      par_fast = par_fast_A,
+      par_slow = par_slow_A,
+      P_bases  = P_bases_A,
+      labels   = labels_2,
+      T_steps  = 6000
+    ),
+    "B" = list(
+      par_fast = par_fast_B,
+      par_slow = par_slow_B,
+      P_bases  = P_bases_B,
+      labels   = labels_2,
+      T_steps  = 6000
+    ),
+    "C1" = list(
+      par_fast = par_fast_C,
+      par_slow = par_slow_C1,
+      P_bases  = P_bases_C1,
+      labels   = labels_2,
+      T_steps  = 6000
+    ),
+    "C2" = list(
+      par_fast = par_fast_C,
+      par_slow = par_slow_C2,
+      P_bases  = P_bases_C2,
+      labels   = labels_2,
+      T_steps  = 6000
+    ),
+    stop("Unknown scenario: ", scenario)
+  )
+}
+
+simulate_replicates <- function(scenario, n_rep = 10, seed_base = 1000){
+  cfg <- scenario_config(scenario)
+  
+  rep_list <- furrr::future_map(
+    1:n_rep,
+    function(r){
+      seeds <- seed_base + c(2*r, 2*r + 1)
+      out <- run_scenario_parallel(
+        par_fast = cfg$par_fast,
+        par_slow = cfg$par_slow,
+        P_bases  = cfg$P_bases,
+        labels   = cfg$labels,
+        T_steps  = cfg$T_steps,
+        seeds    = seeds
+      )
+      out$rep <- r
+      out
+    },
+    .progress = FALSE
+  )
+  
+  bind_rows(rep_list) %>% mutate(scenario = scenario)
+}
+```
+
+
+
+* Interpretation:
+
+  * The system shows episodes of high symptoms but does not remain stuck.
+  * High-precarity groups show *greater volatility and more switching*.
+  * This scenario is closest to describing *episodic depression / relapses* driven by social stress variability.
+
+* Simulation output:
+
+  * Low group stable at low m.
+  * High group fluctuates, producing *intermittent spikes of high symptoms*.
+  * Both m and P show characteristic “plateau–jump–plateau” dynamics.
+
+This scenario provides an interpretable mechanistic explanation for *instability* in high-precarity populations.
+
+
+
+```{r}
+#| label: multi-rep-sims
+
+library(furrr)
+plan(multisession, workers = max(1, parallel::detectCores() - 1))
+
+n_rep <- 30  # you can increase this later (e.g., 30) if you want
+
+sim_reps_A  <- simulate_replicates("A",  n_rep, seed_base = 1000)
+sim_reps_B  <- simulate_replicates("B",  n_rep, seed_base = 2000)
+sim_reps_C1 <- simulate_replicates("C1", n_rep, seed_base = 3000)
+sim_reps_C2 <- simulate_replicates("C2", n_rep, seed_base = 4000)
+
+sim_reps_all <- bind_rows(sim_reps_A, sim_reps_B, sim_reps_C1, sim_reps_C2)
+```
+
+---
+
+# 10. Summary plots across replicates
+
+## 10.1 Ribbon plots (median + IQR over time)
+
+```{r}
+#| label: summary-ribbons
+#| fig-width: 10
+#| cache: false
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+summary_long <- sim_reps_all %>%
+  select(scenario, group, rep, t, P, m) %>%
+  pivot_longer(c(P, m), names_to = "variable", values_to = "value") %>%
+  group_by(scenario, group, variable, t) %>%
+  summarise(
+    median = median(value),
+    lo     = quantile(value, 0.25),
+    hi     = quantile(value, 0.75),
+    .groups = "drop"
+  )
+
+ggplot(summary_long,
+       aes(t, median, colour = group, fill = group)) +
+  geom_ribbon(aes(ymin = lo, ymax = hi),
+              alpha = 0.18, colour = NA) +
+  geom_line(linewidth = 0.6) +
+  facet_grid(variable ~ scenario, scales = "free_y") +
+  scale_color_manual(values = c("Low precarity"  = "#4E79A7",
+                                "High precarity" = "#E15759"),
+                     name = "") +
+  scale_fill_manual(values = c("Low precarity"  = "#4E79A7",
+                               "High precarity" = "#E15759"),
+                    guide = "none") +
+  labs(
+    title = "Median trajectories and IQR across replicates",
+    x = "Time step", y = "Value"
+  ) +
+    theme(legend.position = "bottom")
+
+```
+
+---
+
+## 10.2 Representative trajectories
+
+We now choose one representative replicate per scenario × group.
+We define "representative" as: mean $m$ over time closest to the group’s average across all replicates.
+
+```{r}
+#| label: representative-selection
+#| include: true
+#| fig-width: 10
+
+rep_scores <- sim_reps_all %>%
+  group_by(scenario, group, rep) %>%
+  summarise(
+    m_mean = mean(m),
+    .groups = "drop"
+  )
+
+rep_targets <- rep_scores %>%
+  group_by(scenario, group) %>%
+  mutate(global_mean = mean(m_mean)) %>%
+  slice_min(abs(m_mean - global_mean), n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+rep_representative <- sim_reps_all %>%
+  inner_join(rep_targets, by = c("scenario", "group", "rep"))
+
+rep_long <- rep_representative %>%
+  select(scenario, group, t, P, m) %>%
+  pivot_longer(c(P, m), names_to = "variable", values_to = "value")
+
+ggplot(rep_long, aes(t, value, colour = group)) +
+  geom_line(alpha = 0.85, linewidth = 0.7) +
+  facet_grid(variable ~ scenario, scales = "free_y") +
+  scale_color_manual(values = c("Low precarity"  = "#4E79A7",
+                                "High precarity" = "#E15759"),
+                     name = "") +
+  labs(
+    title = "Representative trajectories per scenario and group",
+    subtitle = "Rep chosen so that mean m is closest to across-replicate group mean.",
+    x = "Time step", y = "Value"
+  ) +
+      theme(legend.position = "bottom")
+
+```
+
+These are good candidates for the **main time-series figures** in the paper.
+
+---
+
+# 11. Graphical abstract
+
+We build a 3-panel graphical abstract:
+
+* **(A)** Conceptual slow–fast feedback.
+* **(B)** Bifurcation structure of the fast layer.
+* **(C)** Mean $(P, m)$ locations of each scenario × group.
+
+```{r}
+#| label: graphical-abstract
+#| fig-width: 10
+
+## Panel A: conceptual diagram (slow–fast feedback)
+panel_A <- ggplot() +
+  xlim(0, 3) + ylim(0, 3) +
+  annotate("text", x = 0.8, y = 2.3,
+           label = "Slow precarity\nP(t)", size = 4.2, fontface = "bold") +
+  annotate("text", x = 2.2, y = 2.3,
+           label = "Fast symptoms\ns_i(t)", size = 4.2, fontface = "bold") +
+  annotate("segment",
+           x = 1.1, y = 2.1, xend = 1.9, yend = 2.1,
+           arrow = arrow(length = unit(0.18, "cm")), linewidth = 0.7) +
+  annotate("segment",
+           x = 1.9, y = 1.9, xend = 1.1, yend = 1.9,
+           arrow = arrow(length = unit(0.18, "cm")), linewidth = 0.7) +
+  annotate("text", x = 1.5, y = 2.35,
+           label = "P → thresholds", size = 3.2) +
+  annotate("text", x = 1.5, y = 1.75,
+           label = "m → precarity", size = 3.2) +
+  theme_void() +
+  labs(title = "(A) Slow–fast feedback loop")
+
+## Panel B: bifurcation diagram (reuse bf_BC)
+panel_B <- ggplot() +
+  {
+    if (nrow(bistable_window) > 0)
+      geom_ribbon(
+        data = bistable_window,
+        aes(x = P, ymin = m_low, ymax = m_high),
+        fill = "grey85", alpha = 0.6
+      )
+  } +
+  geom_line(
+    data = bf_BC %>% filter(!stable),
+    aes(P, m),
+    linetype = "dashed", colour = "grey60"
+  ) +
+  geom_line(
+    data = bf_BC %>% filter(stable, m < 0.5),
+    aes(P, m, colour = "Low branch"),
+    linewidth = 0.9
+  ) +
+  geom_line(
+    data = bf_BC %>% filter(stable, m >= 0.5),
+    aes(P, m, colour = "High branch"),
+    linewidth = 0.9
+  ) +
+  scale_color_manual(values = c("Low branch" = "#4E79A7",
+                                "High branch" = "#E15759"),
+                     name = "") +
+  labs(
+    title = "(B) Bifurcation of fast layer",
+    x = "Precarity P", y = "Mean m"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "bottom")
+
+## Panel C: scenario × group mean locations in (P, m)
+scenario_means <- sim_reps_all %>%
+  group_by(scenario, group) %>%
+  summarise(
+    P_mean = mean(P),
+    m_mean = mean(m),
+    .groups = "drop"
+  )
+
+panel_C <- ggplot(scenario_means,
+                  aes(P_mean, m_mean, colour = group, shape = scenario)) +
+  geom_point(size = 3) +
+  scale_color_manual(values = c("Low precarity"  = "#4E79A7",
+                                "High precarity" = "#E15759"),
+                     name = "Group") +
+  labs(
+    title = "(C) Average location of each scenario×group",
+    x = "Mean precarity (P)",
+    y = "Mean symptoms (m)"
+  ) +
+  theme_minimal(base_size = 11) + 
+  theme(legend.position = "bottom")
+  
+
+# Combine panels using patchwork
+panel_A / (panel_B | panel_C)
+```
+
+
+
+
+
+
+# 12. HELIUS Application — Data-Driven Calibration of the Curie–Weiss Slow–Fast Model
+
+This section demonstrates how group differences in HELIUS symptoms (e.g., Dutch vs non-Dutch) can be reproduced using the *data-calibrated* Curie–Weiss slow–fast model.
+
+We proceed in four steps:
+
+1. Clean HELIUS and construct:
+   - a precarity index $zP$
+   - binary symptoms for the fast layer
+2. Estimate Curie–Weiss parameters from the symptom covariance:
+   - effective slope $\beta J$
+   - external field offset $h_0$
+3. Place empirical group means onto the empirical bifurcation diagram
+4. Calibrate the slow layer so that the simulated ΔP and Δm  
+   match HELIUS ΔP and Δm.
+
+Primary demonstration: **Ethnicity (Dutch vs NonDutch)**  
+Other groupings (Education, Gender, Age) can be swapped with a single line.
+
+
+---
+
+## 12.1 Load & clean HELIUS
+
+```{r}
+#| label: helius-load
+
+library(haven)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(purrr)
+library(IsingFit)
+
+helius <- read_sav("data/helius.sav")
+
+precarity_vars <- c("work_sit","inc_dif","discrim","hea_lit","soc_freq")
+symptom_vars   <- c("anh","dep","slp","ene","app","glt","con","mot","sui")
+
+dat <- helius %>%
+  select(
+    H1_WerkSit, H1_InkHhMoeite, H1_Discr_sumscore,
+    H1_SBSQ_meanscore, H1_SSQT,
+    H1_WlbvRecent1,H1_WlbvRecent2,H1_WlbvRecent3,
+    H1_WlbvRecent4,H1_WlbvRecent5,H1_WlbvRecent6,
+    H1_WlbvRecent7,H1_WlbvRecent_89,H1_WlbvRecent10,
+    H1_PHQ9_sumscore,
+    H1_etniciteit, H1_geslacht, H1_Opleid, H1_lft
+  ) %>%
+  mutate(across(everything(), ~ na_if(.x, -9)),
+         across(everything(), ~ na_if(.x, -1))) %>%
+  drop_na() %>%
+  mutate(across(everything(), as.numeric)) %>%
+  rename(
+    work_sit = H1_WerkSit,
+    inc_dif  = H1_InkHhMoeite,
+    discrim  = H1_Discr_sumscore,
+    hea_lit  = H1_SBSQ_meanscore,
+    soc_freq = H1_SSQT,
+    anh = H1_WlbvRecent1, dep = H1_WlbvRecent2, slp = H1_WlbvRecent3,
+    ene = H1_WlbvRecent4, app = H1_WlbvRecent5, glt = H1_WlbvRecent6,
+    con = H1_WlbvRecent7, mot = H1_WlbvRecent_89, sui = H1_WlbvRecent10,
+    PHQsum = H1_PHQ9_sumscore,
+    ethn   = H1_etniciteit,
+    gender = H1_geslacht,
+    edu_cat = H1_Opleid,
+    age    = H1_lft
+  )
+  
+```
+
+---
+
+## 12.2 Construct precarity index + binarize symptoms
+
+```{r}
+#| label: helius-precarity
+
+data_std <- dat %>%
+  mutate(across(all_of(precarity_vars),
+                ~ as.numeric(scale(.x)[,1]),
+                .names = "z_{col}")) %>%
+  mutate(
+    precarity_index = z_work_sit + z_inc_dif + z_discrim + z_hea_lit + z_soc_freq,
+    zP = as.numeric(scale(precarity_index)[,1])
+  )
+
+# Binarize PHQ items for the Curie–Weiss fast layer
+data_bi <- data_std %>%
+  mutate(across(all_of(symptom_vars), ~ ifelse(.x > 0, 1, 0)))
+```
+
+---
+
+## 12.3 Group maker functions (Ethnicity default)
+
+```{r}
+#| label: helius-groups
+
+#| label: helius-groups
+#| echo: true
+
+make_group_ethnicity <- function(df){
+df %>%
+mutate(
+group = case_when(
+ethn == 1        ~ "Dutch",
+ethn != 1        ~ "NonDutch",
+TRUE             ~ NA_character_
+)
+)
+}
+
+make_group_gender <- function(df){
+df %>%
+mutate(
+group = case_when(
+gender == 1 ~ "Male",
+gender == 2 ~ "Female",
+TRUE        ~ NA_character_
+)
+)
+}
+
+make_group_edu <- function(df){
+df %>%
+mutate(
+group = case_when(
+edu_cat %in% c(3,4) ~ "HighEdu",
+edu_cat %in% c(1,2) ~ "LowEdu",
+TRUE                ~ NA_character_
+)
+)
+}
+
+make_group_age <- function(df){
+df %>%
+mutate(
+group = case_when(
+age < 40  ~ "Young",
+age >= 40 ~ "Old",
+TRUE      ~ NA_character_
+)
+)
+}
+
+# helper to pick grouping by name
+
+get_group_maker <- function(choice = c("ethnicity","gender","education","age")){
+choice <- match.arg(choice)
+switch(
+choice,
+ethnicity = make_group_ethnicity,
+gender    = make_group_gender,
+education = make_group_edu,
+age       = make_group_age
+)
+}
+
+# choose which grouping you want to use IN THIS SECTION
+
+grouping_choice <- "ethnicity"   # <--- change to "gender","education","age" if you like
+GROUP_MAKER     <- get_group_maker(grouping_choice)
+
+```
+
+---
+
+## 12.4 Compute empirical group means (P, m)
+
+(*Ethnicity used here, but the next line can be swapped easily.*)
+
+```{r}
+#| label: helius-group-summaries
+#| echo: true
+
+get_group_summary <- function(df, GROUP_MAKER){
+df %>%
+GROUP_MAKER() %>%
+filter(!is.na(group)) %>%
+group_by(group) %>%
+summarise(
+mean_P = mean(zP),
+sd_P   = sd(zP),
+mean_m = mean(rowMeans(across(all_of(symptom_vars)))),
+sd_m   = sd(rowMeans(across(all_of(symptom_vars)))),
+n      = n(),
+.groups = "drop"
+)
+}
+
+emp_groups <- get_group_summary(data_bi, GROUP_MAKER)
+emp_groups
+```
+
+```{r}
+#| code-fold: false
+
+# empirical contrasts
+
+Dslow_emp <- abs(diff(emp_groups$mean_P))
+Dfast_emp <- abs(diff(emp_groups$mean_m))
+ratio_emp <- Dfast_emp / Dslow_emp
+
+Dslow_emp; Dfast_emp; ratio_emp
+
+```
+
+---
+
+## 12.5 Estimate fast-layer Curie–Weiss parameters from HELIUS
+
+We treat HELIUS symptom correlations as arising from a mean-field CW model:
+
+$$
+m = \sigma\big(\beta[J(m - 1/2) + h_0 + \gamma_P P]\big)
+$$
+
+Data identify:
+
+* **slope near mean** → $\beta J$
+* **intercept** → $h_0^\text{eff}$
+
+### 12.5.1 Compute empirical correlation matrix
+
+```{r}
+#| label: cw-calibration
+#| code-fold: false
+
+# 1) aggregate HELIUS symptoms per participant
+
+sym_mat <- data_bi %>% select(all_of(symptom_vars))
+sum_sym <- sym_mat %>% transmute(sum_symptoms = rowSums(across(everything())))
+df_glm <- data_bi %>%
+select(zP) %>%
+bind_cols(sum_sym)
+
+# 2) binomial GLM: 9 trials per person (9 PHQ items)
+
+fit_glm <- glm(
+cbind(sum_symptoms, 9 - sum_symptoms) ~ zP,
+data   = df_glm,
+family = binomial()
+)
+
+summary(fit_glm)
+
+alpha_hat <- coef(fit_glm)[1]
+gamma_hat <- coef(fit_glm)[2]
+
+# 3) empirical mean m across all participants
+
+m_bar <- mean(rowMeans(sym_mat))
+
+# 4) Use structural β,J from Scenario B/C (bistable CW)
+
+beta_H <- beta_BC   # from earlier section (e.g., 2.0)
+J_H    <- J_BC      # e.g., 3.0
+
+# 5) Solve for h0 such that at P=0, m ≈ m_bar
+
+# logit(m_bar) = β[J(m_bar - 0.5) + h0]   when P=0
+
+# ⇒ h0 = 1/β * logit(m_bar) - J(m_bar - 0.5)
+
+h0_H <- (qlogis(m_bar) / beta_H) - J_H * (m_bar - 0.5)
+
+# 6) γP from GLM slope: γ_hat ≈ β γP  ⇒ γP = γ_hat / β
+
+gammaP_H <- gamma_hat / beta_H
+
+c(beta_H = beta_H, J_H = J_H, h0_H = h0_H, gammaP_H = gammaP_H)
+
+```
+
+
+<!-- ### **12.5.2 Estimate βJ from correlation** -->
+
+<!-- For a CW model with 0/1 spins, the mean-field susceptibility gives: -->
+
+<!-- [ -->
+<!-- \bar r \approx \frac{\beta J}{1 + \beta J} \implies -->
+<!-- \beta J \approx \frac{\bar r}{1-\bar r}. -->
+<!-- ] -->
+
+<!-- ```{r} -->
+<!-- #| label: cw-estimate-betaJ -->
+
+<!-- betaJ_hat <- mean_corr / (1 - mean_corr) -->
+<!-- betaJ_hat -->
+<!-- ``` -->
+
+<!-- --- -->
+
+<!-- ### **12.5.3 Estimate external field h₀** -->
+
+<!-- We invert the fixed-point equation: -->
+
+<!-- [ -->
+<!-- m = \sigma(\beta[J(m-1/2) + h_0]) -->
+<!-- ] -->
+
+<!-- Solve for (h_0): -->
+
+<!-- ```{r} -->
+<!-- #| label: cw-estimate-h0 -->
+
+<!-- m_hat <- mean(colMeans(sym_mat))     # empirical mean of 0/1 symptoms -->
+<!-- beta_hat <- 1                        # we treat beta=1 and J=betaJ_hat -->
+
+<!-- J_hat <- betaJ_hat -->
+
+<!-- logit_m <- log(m_hat/(1-m_hat)) -->
+<!-- h0_hat <- logit_m - J_hat*(m_hat - 0.5) -->
+
+<!-- h0_hat -->
+<!-- ``` -->
+
+---
+
+## 12.6 Empirical bifurcation diagram (using estimated βJ, h₀)
+
+```{r}
+#| label: cw-bifurcation-helius
+#| fig-width: 8
+#| fig-height: 5
+
+P_grid_H <- seq(-5.5, 4, length.out = 400)
+
+bf_H <- cw01_bifurcation_curve(
+P_grid = P_grid_H,
+beta   = beta_H,
+J      = J_H,
+h0     = h0_H,
+gammaP = gammaP_H
+)
+
+stab_by_P_H <- bf_H %>%
+filter(stable) %>%
+group_by(P) %>%
+summarise(
+n_stable = n(),
+m_low    = min(m),
+m_high   = max(m),
+.groups  = "drop"
+)
+
+bistable_window_H <- stab_by_P_H %>%
+filter(n_stable == 2)
+
+ggplot() +
+{
+if (nrow(bistable_window_H) > 0)
+geom_ribbon(
+data = bistable_window_H,
+aes(x = P, ymin = m_low, ymax = m_high),
+fill = "grey85", alpha = 0.6
+)
+} +
+geom_line(
+data = bf_H %>% filter(!stable),
+aes(P, m),
+linetype = "dashed", colour = "grey60"
+) +
+geom_line(
+data = bf_H %>% filter(stable, m < 0.5),
+aes(P, m, colour = "Low branch"),
+linewidth = 1
+) +
+geom_line(
+data = bf_H %>% filter(stable, m >= 0.5),
+aes(P, m, colour = "High branch"),
+linewidth = 1
+) +
+
+# overlay HELIUS group means
+
+geom_point(
+data = emp_groups %>% rename(P = mean_P, m = mean_m),
+aes(P, m, colour = group),
+size = 3, shape = 16
+) +
+scale_color_manual(
+values = c(
+"Low branch" = "#4E79A7",
+"High branch" = "#E15759",
+# you may have 2 groups; palette extends naturally
+"Dutch"      = "#4E79A7",
+"NonDutch"   = "#E15759",
+"Male"       = "#4E79A7",
+"Female"     = "#E15759",
+"HighEdu"    = "#4E79A7",
+"LowEdu"     = "#E15759",
+"Young"      = "#4E79A7",
+"Old"        = "#E15759"
+),
+breaks = c("Low branch","High branch", unique(emp_groups$group)),
+name   = NULL
+) +
+labs(
+title    = "Bifurcation of calibrated CW fast layer with HELIUS groups",
+subtitle = "Solid lines: stable equilibria; dashed: unstable. Points = HELIUS group means (P,m).",
+x = "Precarity P (model scale ~ zP)",
+y = "Mean symptom activation m"
+) +
+theme_minimal(base_size = 13)
+
+```
+
+---
+
+## 12.7 Calibrate the slow layer using HELIUS ΔP and Δm**
+
+We want:
+
+$$
+|\Delta m|_{\text{sim}} \approx |\Delta m|_{\text{emp}}, \quad
+|\Delta P|_{\text{sim}} \approx |\Delta P|_{\text{emp}}.
+$$
+
+We will set:
+
+* baseline $P_\text{base}$ = empirical means
+* $b, \kappa, \sigma_P$ tuned to approximate empirical contrast
+* $m_* =$ empirical global baseline
+
+```{r}
+#| label: helius-map-params
+#| code-fold: false
+
+# Fast layer calibrated from HELIUS:
+
+par_fast_H <- list(
+n_nodes = 100,
+sweeps  = 40,
+beta    = beta_H,
+J       = J_H,
+h0      = h0_H,
+gammaP  = gammaP_H
+)
+
+# Global m baseline = empirical mean
+
+m_star_H <- mean(rowMeans(sym_mat))
+
+# Slow layer calibration:
+
+# Rough moment-matching: Var(P) ~ sigmaP^2 / (2*kappa)
+
+# Want Var(zP) ≈ 1 → choose kappa ~0.3 → sigmaP ≈ sqrt(2*0.3)
+
+kappa_H  <- 0.30
+sigmaP_H <- sqrt(2 * kappa_H)   # ~ 0.775
+b_H      <- 0.20                # moderate symptom → P feedback
+
+par_slow_H <- list(
+dt       = 0.02,
+kappa    = kappa_H,
+b        = b_H,
+m_star   = m_star_H,
+sigmaP   = sigmaP_H,
+lambda_m = 0.001
+)
+
+# P_base per group = empirical mean zP
+
+P_bases_H <- emp_groups$mean_P
+labels_H  <- emp_groups$group
+
+P_bases_H; labels_H
+
+```
+
+---
+
+## 12.8 Run calibrated slow–fast simulation
+
+```{r}
+#| label: helius-simulation
+#| echo: true
+
+set.seed(1)
+
+sim_HELIUS <- run_scenario_parallel(
+par_fast = par_fast_H,
+par_slow = par_slow_H,
+P_bases  = P_bases_H,
+labels   = labels_H,
+T_steps  = 5000,
+seeds    = c(123, 456)   # two groups → two seeds
+)
+
+sim_H_long <- sim_HELIUS %>%
+select(t, P, m, group) %>%
+pivot_longer(c(P, m), names_to = "variable", values_to = "value")
+
+sim_H_long %>% head()
+
+```
+
+---
+
+## 12.9 Empirical vs simulated ΔP and Δm
+
+```{r}
+#| label: helius-vs-sim-ts
+#| fig-height: 5
+#| fig-width: 12
+
+# empirical m distributions for chosen grouping
+
+emp_ts <- data_bi %>%
+GROUP_MAKER() %>%
+filter(!is.na(group)) %>%
+mutate(m_emp = rowMeans(across(all_of(symptom_vars))))
+
+p_emp <- ggplot(emp_ts, aes(x = group, y = m_emp, fill = group)) +
+geom_boxplot(alpha = 0.6) +
+labs(
+title = "Empirical HELIUS symptom levels",
+y = "m (mean of 9 symptoms)"
+) +
+theme_minimal(base_size = 13) +
+    theme(legend.position = "bottom")
+
+
+p_sim <- ggplot(sim_H_long %>% filter(variable == "m"),
+aes(t, value, colour = group)) +
+geom_line(alpha = .6) +
+labs(
+title = "Simulated symptom trajectories",
+y = "m"
+) +
+theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom")
+
+p_emp | p_sim
+
+```
+
+<!-- Plot: -->
+
+<!-- ```{r} -->
+<!-- ggplot(tibble( -->
+<!--   source=c("Empirical","Simulated"), -->
+<!--   Dslow=c(Dslow_emp, Dslow_sim), -->
+<!--   Dfast=c(Dfast_emp, Dfast_sim) -->
+<!-- ), aes(Dslow, Dfast, label=source, color=source)) + -->
+<!--   geom_point(size=4) + -->
+<!--   geom_text(nudge_y=.01) + -->
+<!--   geom_abline(slope=1, linetype="dashed") + -->
+<!--   labs(title="Empirical vs simulated contrasts", -->
+<!--        x="|Δ Precarity|", y="|Δ Symptom level|") -->
+<!-- ``` -->
+
+<!-- --- -->
+
+## 12.10 Kernel density overlay (m and P)
+
+```{r}
+#| label: helius-vs-sim-plane
+#| fig-width: 8
+#| fig-height: 5
+
+emp_points <- emp_groups %>%
+rename(P = mean_P, m = mean_m)
+
+sim_points <- sim_HELIUS %>%
+group_by(group) %>%
+summarise(
+P = mean(P),
+m = mean(m),
+.groups = "drop"
+)
+
+ggplot() +
+geom_point(
+data = emp_points,
+aes(P, m, color = group),
+size = 4,
+shape = 16
+) +
+geom_point(
+data = sim_points,
+aes(P, m, color = group),
+size = 4,
+shape = 17
+) +
+labs(
+title    = "Empirical vs simulated (P, m) group locations",
+subtitle = "Circles = HELIUS, Triangles = Calibrated model",
+x        = "Precarity zP / P",
+y        = "Mean symptoms m"
+) +
+theme_minimal(base_size = 13)
+
+```
+
+---
+
+### 12.11 Empirical vs simulated |ΔP| and |Δm|
+                                                    
+```{r}
+#| label: helius-vs-sim-diff
+#| echo: true
+
+Dslow_sim <- abs(diff(sim_points$P))
+Dfast_sim <- abs(diff(sim_points$m))
+ratio_sim <- Dfast_sim / Dslow_sim
+
+df_diff <- tibble(
+  type  = c("Empirical", "Simulated"),
+  Dslow = c(Dslow_emp, Dslow_sim),
+  Dfast = c(Dfast_emp, Dfast_sim),
+  ratio = c(ratio_emp, ratio_sim)
+)
+
+df_diff
+
+ggplot(df_diff, aes(Dslow, Dfast, label = type, color = type)) +
+  geom_point(size = 4) +
+  geom_text(nudge_y = 0.01) +
+  geom_abline(slope = 1, linetype = "dashed") +
+  xlim(0, max(df_diff$Dslow) * 1.3) +
+  ylim(0, max(df_diff$Dfast) * 1.3) +
+  labs(
+    title = "Slow vs fast group differences: HELIUS vs calibrated model",
+                                                      x     = "|Δ Precarity|",
+                                                      y     = "|Δ Symptom level|"
+                                                    ) +
+                                                    theme_minimal(base_size = 13)
+```
+                                                  
+---
+  
+### 12.12 Kernel density overlays (m and P)
+  
+```{r}
+#| label: kde-m
+#| fig-width: 8
+#| fig-height: 5
+
+emp_kde <- data_bi %>%
+  GROUP_MAKER() %>%
+  filter(!is.na(group)) %>%
+  mutate(m_emp = rowMeans(across(all_of(symptom_vars))))
+
+sim_kde <- sim_HELIUS %>%
+  group_by(group) %>%
+  mutate(m_sim = m)
+
+ggplot() +
+  geom_density(
+    data = emp_kde,
+    aes(m_emp, color = paste0("Emp_", group)),
+    linewidth = 1.1
+  ) +
+  geom_density(
+    data = sim_kde,
+    aes(m_sim, color = paste0("Sim_", group)),
+    linetype = "dashed",
+    linewidth = 1
+  ) +
+  labs(
+    title = "Empirical vs simulated distributions", 
+    x = "m", y = "Density"
+  ) +
+  theme_minimal(base_size = 13)
+```
+
+```{r}
+#| label: kde-P
+#| fig-width: 8
+#| fig-height: 5
+
+ggplot() +
+  geom_density(
+    data = emp_kde,
+    aes(zP, color = paste0("Emp_", group)),
+    linewidth = 1.1
+  ) +
+  geom_density(
+    data = sim_kde,
+    aes(P, color = paste0("Sim_", group)),
+    linetype = "dashed",
+    linewidth = 1
+  ) +
+  labs(
+    title = "Empirical vs simulated distribution",
+    x = "P / zP", y = "Density"
+  ) +
+  theme_minimal(base_size = 13)
+```
+
+---
+  
+### 12.13 Network comparison 
+  
+This also fixes your `slice_tail` error.
+
+```{r}
+#| label: network-comparison
+#| echo: true
+
+library(tidyr)
+
+# Empirical IsingFit network on HELIUS
+W_emp <- IsingFit(
+  data_bi %>% select(all_of(symptom_vars)),
+  plot   = FALSE,
+  family = "binomial"
+)$weiadj
+diag(W_emp) <- 0
+
+# Model pseudo-network: sample Bernoulli 
+# for one group (e.g., "high precarity" = second level)
+target_group <- labels_H[2]
+
+sim_group_rows <- sim_HELIUS %>%
+  filter(group == target_group)
+
+Ntail <- min(1500, nrow(sim_group_rows))
+
+node_draws <- sim_group_rows %>%
+  tail(Ntail) %>%
+  mutate(prob = pmin(pmax(m, 1e-6), 1 - 1e-6)) %>%
+  mutate(nodes = map(prob, ~ rbinom(9, 1, .x))) %>%
+  select(-prob) %>%
+  unnest_wider(nodes, names_sep = "_")
+
+W_model <- cor(node_draws %>% select(starts_with("nodes_")))
+diag(W_model) <- 0
+
+df_net <- tibble(
+  emp = as.vector(W_emp),
+  mod = as.vector(W_model)
+) %>%
+  filter(!is.na(emp), !is.na(mod))
+
+ggplot(df_net, aes(emp, mod)) +
+  geom_point(alpha = .6) +
+  geom_smooth(method = "lm", se = FALSE, colour = "black") +
+  labs(
+    title = "Empirical IsingFit vs model pseudo-network",
+    x     = "Empirical edge weight (IsingFit)",
+    y     = "Model-implied edge correlation"
+  ) +
+  theme_minimal(base_size = 13)
+```
+                                                  
