@@ -34,7 +34,6 @@ suppressPackageStartupMessages({
 #     - whether a bistable window exists
 #     - fold locations (if present)
 extract_bifurcation_info_legacy <- function(bf) {
-  
   stab_by_P <- bf |>
     dplyr::filter(stable) |>
     dplyr::group_by(P) |>
@@ -108,7 +107,6 @@ assign_branch_state_legacy <- function(sim_df, branch_funs, burn_in = 500) {
 #   n_switch
 #   med_high_dwell
 switch_metrics_legacy <- function(df_one, burn_in = 500) {
-  
   d <- dplyr::filter(df_one, t > burn_in)
   
   frac_high_abs <- mean(d$m > 0.5, na.rm = TRUE)
@@ -131,7 +129,7 @@ switch_metrics_legacy <- function(df_one, burn_in = 500) {
   
   r <- rle(st)
   high_runs <- r$lengths[r$values == "high"]
-  med_high_dwell <- ifelse(length(high_runs) == 0, 0, stats::median(high_runs))
+  med_high_dwell <- if (length(high_runs) == 0) 0 else stats::median(high_runs)
   
   tibble::tibble(
     mean_m           = mean(d$m, na.rm = TRUE),
@@ -233,7 +231,6 @@ run_scenario_diagnostics_legacy <- function(
     parallel_reps = TRUE,
     parallel_groups = TRUE
 ){
-  # 1) bifurcation curve for the fast-layer parameterization
   bf <- cw01_bifurcation_curve(
     P_grid = P_grid,
     beta   = par_fast$beta,
@@ -247,7 +244,6 @@ run_scenario_diagnostics_legacy <- function(
   
   rep_ids <- seq_len(n_rep)
   
-  # 2) simulate replicates
   if (isTRUE(parallel_reps)) {
     sim_all <- furrr::future_map_dfr(
       rep_ids,
@@ -292,13 +288,11 @@ run_scenario_diagnostics_legacy <- function(
   
   sim_all <- dplyr::mutate(sim_all, scenario = scenario_name)
   
-  # 3) assign branch labels
   sim_lab <- sim_all |>
     dplyr::group_by(rep, group) |>
     dplyr::group_modify(~ assign_branch_state_legacy(.x, branch_funs, burn_in = burn_in)) |>
     dplyr::ungroup()
   
-  # 4) metrics per replicate
   metrics <- sim_lab |>
     dplyr::group_by(scenario, rep, group) |>
     dplyr::group_modify(~ switch_metrics_legacy(.x, burn_in = burn_in)) |>
@@ -307,26 +301,24 @@ run_scenario_diagnostics_legacy <- function(
   metrics_summary <- metrics |>
     dplyr::group_by(scenario, group) |>
     dplyr::summarise(
-      mean_m           = mean(mean_m),
-      mean_P           = mean(mean_P),
+      mean_m           = mean(mean_m, na.rm = TRUE),
+      mean_P           = mean(mean_P, na.rm = TRUE),
       frac_high_abs    = mean(frac_high_abs, na.rm = TRUE),
       frac_high_branch = mean(frac_high_branch, na.rm = TRUE),
-      n_switch         = mean(n_switch),
+      n_switch         = mean(n_switch, na.rm = TRUE),
       med_high_dwell   = stats::median(med_high_dwell, na.rm = TRUE),
       .groups = "drop"
     )
   
-  # representative replicate (closest mean_m to group-average mean_m)
   rep_pick <- metrics |>
     dplyr::group_by(scenario, group) |>
-    dplyr::mutate(target = mean(mean_m)) |>
+    dplyr::mutate(target = mean(mean_m, na.rm = TRUE)) |>
     dplyr::slice_min(abs(mean_m - target), n = 1, with_ties = FALSE) |>
     dplyr::ungroup() |>
     dplyr::select(rep, group)
   
   sim_rep <- dplyr::inner_join(sim_all, rep_pick, by = c("rep", "group"))
   
-  # 5) optional plots (requires plotting helpers to be sourced)
   p_ts <- plot_timeseries_with_folds(
     sim_rep, bif_info,
     title   = paste0(scenario_name, ": representative time series (thresholds marked)"),
@@ -356,356 +348,14 @@ run_scenario_diagnostics_legacy <- function(
 # ------------------------------------------------------------
 # These aliases let older scripts keep working after moving the
 # tuning stack into utils_legacy.R.
+extract_bifurcation_info_old  <- extract_bifurcation_info_legacy
+make_branch_interpolators_old <- make_branch_interpolators_legacy
+assign_branch_state_old       <- assign_branch_state_legacy
 
-extract_bifurcation_info_old   <- extract_bifurcation_info_legacy
-make_branch_interpolators_old  <- make_branch_interpolators_legacy
-assign_branch_state_old        <- assign_branch_state_legacy
-switch_metrics                 <- switch_metrics_legacy
-run_scenario_parallel          <- run_scenario_parallel_legacy
-run_scenario_diagnostics_old   <- run_scenario_diagnostics_legacy
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# ------------------------------------------------------------
-# Previous version (v1, v2): retained only for record
-# and should not be used for final manuscript results.
-# ------------------------------------------------------------
-run_scenario_diagnostics <- function(
-    scenario_name,
-    par_fast,
-    par_slow,
-    P_bases,
-    labels,
-    T_steps,
-    n_rep = 30,
-    seed_base = 1000,
-    burn_in = 500,
-    P_grid = seq(-2, 2, length.out = 400),
-    m0s = NULL,
-    parallel_reps = TRUE,
-    parallel_groups = TRUE
-){
-  # 1) bifurcation curve for the fast-layer parameterization
-  bf <- cw01_bifurcation_curve(
-    P_grid = P_grid,
-    beta   = par_fast$beta,
-    J      = par_fast$J,
-    h0     = par_fast$h0,
-    gammaP = par_fast$gammaP
-  )
-  
-  bif_info    <- extract_bifurcation_info(bf)
-  branch_funs <- make_branch_interpolators(bif_info$stab_by_P)
-  
-  rep_ids <- seq_len(n_rep)
-  
-  # 2) simulate replicates
-  if (isTRUE(parallel_reps)) {
-    sim_all <- furrr::future_map_dfr(
-      rep_ids,
-      function(r){
-        seeds <- seed_base + c(2*r, 2*r + 1)
-        out <- run_scenario_parallel(
-          par_fast = par_fast,
-          par_slow = par_slow,
-          P_bases  = P_bases,
-          labels   = labels,
-          T_steps  = T_steps,
-          seeds    = seeds,
-          m0s      = m0s,
-          parallel_groups = parallel_groups
-        )
-        out$rep <- r
-        out
-      },
-      .progress = TRUE,
-      .options  = furrr::furrr_options(seed = TRUE)
-    )
-  } else {
-    sim_all <- purrr::map_dfr(
-      rep_ids,
-      function(r){
-        seeds <- seed_base + c(2*r, 2*r + 1)
-        out <- run_scenario_parallel(
-          par_fast = par_fast,
-          par_slow = par_slow,
-          P_bases  = P_bases,
-          labels   = labels,
-          T_steps  = T_steps,
-          seeds    = seeds,
-          m0s      = m0s,
-          parallel_groups = parallel_groups
-        )
-        out$rep <- r
-        out
-      }
-    )
-  }
-  
-  sim_all <- dplyr::mutate(sim_all, scenario = scenario_name)
-  
-  # 3) assign branch labels
-  sim_lab <- sim_all |>
-    dplyr::group_by(scenario, rep, group) |>
-    dplyr::group_modify(~ assign_branch_state(.x, branch_funs, burn_in = burn_in)) |>
-    dplyr::ungroup()
-  
-  
-  # 4) metrics per replicate
-  metrics <- sim_lab |>
-    dplyr::group_by(scenario, rep, group) |>
-    dplyr::group_modify(~ switch_metrics(.x, burn_in = burn_in)) |>
-    dplyr::ungroup()
-  
-  metrics_summary <- metrics %>%
-    dplyr::group_by(scenario, group) %>%
-    dplyr::summarise(
-      mean_m           = mean(mean_m, na.rm = TRUE),
-      mean_P           = mean(mean_P, na.rm = TRUE),
-      frac_high_abs    = mean(frac_high_abs, na.rm = TRUE),
-      frac_high_branch = mean(frac_high_branch, na.rm = TRUE),
-      n_switch         = mean(n_switch, na.rm = TRUE),
-      med_high_dwell   = stats::median(med_high_dwell, na.rm = TRUE),
-      .groups = "drop"
-    )
-  
-  
-  # representative replicate (closest mean_m to group-average mean_m)
-  rep_pick <- metrics |>
-    dplyr::group_by(scenario, group) |>
-    dplyr::mutate(target = mean(mean_m)) |>
-    dplyr::slice_min(abs(mean_m - target), n = 1, with_ties = FALSE) |>
-    dplyr::ungroup() |>
-    dplyr::select(rep, group)
-  
-  sim_rep <- dplyr::inner_join(sim_all, rep_pick, by = c("rep","group"))
-  
-  # 5) plots
-  p_ts <- plot_timeseries_with_folds(
-    sim_rep, bif_info,
-    title   = paste0(scenario_name, ": representative time series (thresholds marked)"),
-    burn_in = burn_in
-  )
-  
-  p_overlay <- plot_branch_overlay(
-    bf, bif_info,
-    dplyr::filter(sim_rep, t > burn_in),
-    title = paste0(scenario_name, ": trajectory on bifurcation diagram")
-  )
-  
-  list(
-    bf            = bf,
-    bif_info      = bif_info,
-    sim_all       = sim_all,
-    sim_labeled   = sim_lab,
-    metrics       = metrics,
-    metrics_summary = metrics_summary,
-    fig_timeseries  = p_ts,
-    fig_overlay     = p_overlay
-  )
-}
-
-
-
-
-
-
-
-
-# ------------------------------------------------------------
-# Scenario runner v2:
-# - supports per-group slow params (named list keyed by group label)
-# - runs (group x rep) as independent tasks (good for shocks)
-# - robust to duplicated/overlapping args in do.call()
-# - computes switching metrics + optional shock summaries
-# ------------------------------------------------------------
-run_scenario_diagnostics_v2 <- function(
-    scenario_name,
-    par_fast,
-    par_slow,
-    P_bases,
-    labels,
-    T_steps    = 6000,
-    n_rep      = 30,
-    seed_base  = 12000,
-    burn_in    = 500,
-    parallel   = TRUE,
-    P_grid     = seq(-2, 2, length.out = 400)
-){
-  stopifnot(length(P_bases) == length(labels))
-  
-  # ---- allow per-group slow params (named list keyed by label) ----
-  # par_slow can be:
-  #   (1) a single list of params (same for all groups)
-  #   (2) a named list of lists keyed by group label
-  get_par_slow_for_group <- function(label){
-    if (is.list(par_slow) && !is.null(names(par_slow)) && label %in% names(par_slow)) {
-      return(par_slow[[label]])
-    }
-    par_slow
-  }
-  
-  # ---- build task grid: every (group, rep) is a separate job ----
-  group_df <- tibble::tibble(
-    group  = labels,
-    P_base = P_bases
-  )
-  
-  tasks <- tidyr::crossing(group_df, rep = seq_len(n_rep)) |>
-    dplyr::mutate(seed = seed_base + dplyr::row_number())
-  
-  run_one <- function(P_base, label, rep_i, seed_i){
-    
-    ps <- get_par_slow_for_group(label)
-    
-    # Prevent slow-params lists from overriding per-task setup
-    reserved <- c("T_steps","P_base","P0","m0","seed")
-    if (!is.null(ps) && !is.null(names(ps))) {
-      ps <- ps[setdiff(names(ps), reserved)]
-    }
-    
-    # ---- CRITICAL: sanitize slow params to avoid do.call collisions ----
-    # keep only valid formals
-    valid <- names(formals(simulate_slowfast_cw01_v2))
-    ps <- ps[names(ps) %in% valid]
-    
-    # drop any names that would collide with fixed args or par_fast
-    fixed_names <- c("T_steps","P_base","P0","m0","seed", names(par_fast))
-    ps <- ps[setdiff(names(ps), fixed_names)]
-    
-    # de-duplicate names defensively
-    if (any(duplicated(names(ps)))) ps <- ps[!duplicated(names(ps), fromLast = TRUE)]
-    # -------------------------------------------------------------------
-    
-    sim <- do.call(simulate_slowfast_cw01_v2, c(
-      list(
-        T_steps = T_steps,
-        P_base  = P_base,
-        P0      = P_base,
-        m0      = 0.05,
-        seed    = seed_i
-      ),
-      par_fast,
-      ps
-    ))
-    
-    sim$scenario <- scenario_name
-    sim$group    <- label
-    sim$rep      <- rep_i
-    sim$seed     <- seed_i
-    sim
-  }
-  
-  # ---- run sims (parallel over tasks: group x rep) ----
-  if (isTRUE(parallel)) {
-    sim_all <- furrr::future_pmap_dfr(
-      list(
-        P_base = tasks$P_base,
-        label  = tasks$group,
-        rep_i  = tasks$rep,
-        seed_i = tasks$seed
-      ),
-      run_one,
-      .options  = furrr::furrr_options(seed = TRUE),
-      .progress = TRUE
-    )
-  } else {
-    sim_all <- purrr::pmap_dfr(
-      list(
-        P_base = tasks$P_base,
-        label  = tasks$group,
-        rep_i  = tasks$rep,
-        seed_i = tasks$seed
-      ),
-      run_one
-    )
-  }
-  
-  # ---- fast-layer bifurcation structure ----
-  bf <- cw01_bifurcation_curve(
-    P_grid  = P_grid,
-    beta    = par_fast$beta,
-    J       = par_fast$J,
-    h0      = par_fast$h0,
-    gammaP  = par_fast$gammaP
-  )
-  bif_info <- extract_bifurcation_info(bf)
-  
-  # ---- switching/dwell metrics ----
-  metrics <- compute_switch_metrics(sim_all, bif_info = bif_info, burn_in = burn_in)
-  
-  # ---- OPTIONAL: shock diagnostics (works with sim v2 outputs shock_*) ----
-  has_shock_any  <- ("shock_any"  %in% names(sim_all))
-  has_shock_exo  <- ("shock_exo"  %in% names(sim_all))
-  has_shock_endo <- ("shock_endo" %in% names(sim_all))
-  
-  if (has_shock_any || has_shock_exo || has_shock_endo) {
-    
-    shock_rep <- sim_all |>
-      dplyr::filter(t > burn_in) |>
-      dplyr::group_by(scenario, rep, group) |>
-      dplyr::summarise(
-        n_shock = dplyr::if_else(
-          has_shock_any,
-          sum(shock_any == 1L, na.rm = TRUE),
-          sum(
-            (abs(dplyr::coalesce(shock_exo,  0)) > 0) |
-              (abs(dplyr::coalesce(shock_endo, 0)) > 0),
-            na.rm = TRUE
-          )
-        ),
-        n_shock_exo  = if (has_shock_exo)  sum(abs(shock_exo)  > 0, na.rm = TRUE) else NA_real_,
-        n_shock_endo = if (has_shock_endo) sum(abs(shock_endo) > 0, na.rm = TRUE) else NA_real_,
-        mean_abs_shock = mean(
-          abs(dplyr::coalesce(shock_exo, 0) + dplyr::coalesce(shock_endo, 0)),
-          na.rm = TRUE
-        ),
-        .groups = "drop"
-      )
-    
-    metrics <- metrics |>
-      dplyr::left_join(shock_rep, by = c("scenario","rep","group"))
-  }
-  
-  # ---- summary over replicates ----
-  metrics_summary <- metrics |>
-    dplyr::group_by(scenario, group) |>
-    dplyr::summarise(
-      mean_m           = mean(mean_m, na.rm = TRUE),
-      mean_P           = mean(mean_P, na.rm = TRUE),
-      frac_high_abs    = mean(frac_high_abs, na.rm = TRUE),
-      frac_high_branch = mean(frac_high_branch, na.rm = TRUE),
-      n_switch         = mean(n_switch, na.rm = TRUE),
-      med_high_dwell   = stats::median(med_high_dwell, na.rm = TRUE),
-      
-      n_shock        = if ("n_shock" %in% names(metrics)) mean(n_shock, na.rm = TRUE) else NA_real_,
-      n_shock_exo    = if ("n_shock_exo" %in% names(metrics)) mean(n_shock_exo, na.rm = TRUE) else NA_real_,
-      n_shock_endo   = if ("n_shock_endo" %in% names(metrics)) mean(n_shock_endo, na.rm = TRUE) else NA_real_,
-      mean_abs_shock = if ("mean_abs_shock" %in% names(metrics)) mean(mean_abs_shock, na.rm = TRUE) else NA_real_,
-      .groups = "drop"
-    )
-  
-  list(
-    sim_all         = sim_all,
-    bf              = bf,
-    bif_info        = bif_info,
-    metrics         = metrics,
-    metrics_summary = metrics_summary
-  )
-}
-
+# Unsuffixed aliases for older grid-search scripts
+switch_metrics         <- switch_metrics_legacy
+run_scenario_parallel  <- run_scenario_parallel_legacy
+run_scenario_diagnostics <- run_scenario_diagnostics_legacy
 
 
 
