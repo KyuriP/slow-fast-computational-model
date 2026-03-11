@@ -182,7 +182,7 @@ heat_zoom <- purrr::map_dfr(
   .progress = TRUE
 )
 
-saveRDS(heat_zoom, "res_clean/heat_zoom_noshock_hyst2.rds")
+# saveRDS(heat_zoom, "res_clean/heat_zoom_noshock_hyst2.rds")
 
 # ------------------------------------------------------------
 # 7) Sanity checks
