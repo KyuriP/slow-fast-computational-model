@@ -1,5 +1,5 @@
 # ============================================================
-# 01_main_sim.R
+# 02_main_sim.R
 # ============================================================
 # Purpose
 # -------
@@ -11,10 +11,10 @@
 #
 # Outputs (RDS)
 # -------------
-#   res_clean/res_A_clean.rds
-#   res_clean/res_AS_clean.rds
-#   res_clean/res_B0_clean.rds
-#   res_clean/res_BS_clean.rds
+#   res/main/res_A_clean.rds
+#   res/main/res_AS_clean.rds
+#   res/main/res_B0_clean.rds
+#   res/main/res_BS_clean.rds
 #
 # Design guarantees
 # -----------------
@@ -32,11 +32,11 @@ suppressPackageStartupMessages({
   library(furrr)
 })
 
-source("R/utils_fastlayer.R")
-source("R/utils_slowfast.R")
-source("R/utils_plotting.R")
-source("R/utils_diagnostics.R")
-source("R/utils_gridsearch.R")
+source("R/utils/utils_fastlayer.R")
+source("R/utils/utils_slowfast.R")
+source("R/utils/utils_plotting.R")
+source("R/utils/utils_diagnostics.R")
+source("R/utils/utils_gridsearch.R")
 
 # ------------------------------------------------------------
 # Reproducible parallel RNG
@@ -48,7 +48,7 @@ plan(multisession, workers = max(1, parallel::detectCores() - 2))
 # ------------------------------------------------------------
 # 0) Load final tuned parameters
 # ------------------------------------------------------------
-final_params <- readRDS("res/final_params.rds")
+final_params <- readRDS("res/tuned/final_params.rds")
 
 # ------------------------------------------------------------
 # 1) Canonical parameters held fixed across all scenarios
@@ -178,7 +178,7 @@ res_BS <- run_scenario_diagnostics_v3(
 # ------------------------------------------------------------
 # 5) Save artifacts for the manuscript plotting code
 # ------------------------------------------------------------
-# saveRDS(res_A,  "res_clean/res_A_clean.rds")
-# saveRDS(res_AS, "res_clean/res_AS_clean.rds")
-# saveRDS(res_B0, "res_clean/res_B0_clean.rds")
-# saveRDS(res_BS, "res_clean/res_BS_clean.rds")
+# saveRDS(res_A,  "res/main/res_A_clean.rds")
+# saveRDS(res_AS, "res/main/res_AS_clean.rds")
+# saveRDS(res_B0, "res/main/res_B0_clean.rds")
+# saveRDS(res_BS, "res/main/res_BS_clean.rds")
