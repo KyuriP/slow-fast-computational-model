@@ -1,5 +1,5 @@
 # ============================================================
-# 01_figure_bistability_geometry.R
+# 04_figure_bistability_geometry.R
 # ============================================================
 # Figure 1: Geometric intuition for bistability (βJ > 4)
 # 0/1 Curie–Weiss mean-field map
@@ -9,7 +9,7 @@
 #   B: Bifurcation diagram m*(P) for a bistable-capable regime
 #
 # Output
-#   fig_bistability_geometry
+#   img/Figure_01_bistability_geometry.pdf
 # ============================================================
 
 suppressPackageStartupMessages({
