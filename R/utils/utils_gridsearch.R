@@ -11,7 +11,7 @@
 # not part of the final manuscript simulation pipeline.
 # ============================================================
 
-source("R/utils_legacy.R")
+source("R/utils/utils_legacy.R")
 
 # ------------------------------------------------------------
 # Scalar coalesce: replace NA/NaN with fallback
