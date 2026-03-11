@@ -51,14 +51,7 @@ slow-fast-linking/
 └── quarto-docs/
     ├── theoretical_slowfast2.qmd
     ├── theoretical_slowfast3.qmd
-    ├── theoretical_slowfast4.qmd
-    ├── theoretical_slowfast5_shock.qmd
-    ├── timeseparation.qmd
-    ├── theoretical_slowfast2.html
-    ├── theoretical_slowfast3.html
-    ├── theoretical_slowfast4.html
-    ├── theoretical_slowfast5_shock.html
-    ├── timeseparation.html
+    ├── ...
     └── working_funcs.R
 ```
 
@@ -90,3 +83,10 @@ slow-fast-linking/
 * `07_inspect_finalparams.R`
   Quick inspection / validation helper for tuned parameters.
 
+
+## License
+
+This project is licensed under the GNU General Public License v3.0.
+
+You are free to use, modify, and redistribute the code, provided that
+derivative works are also distributed under the same license.
