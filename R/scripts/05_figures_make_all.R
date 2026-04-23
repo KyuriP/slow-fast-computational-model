@@ -67,7 +67,7 @@ pal <- c(
 )
 
 scenario_labels <- c(
-  A = "A (monostable)",
+  A = "M (monostable)",
   B = "B (bistable)"
 )
 
@@ -116,14 +116,14 @@ sim_BS_rep <- get_rep_sim(res_BS)
 # 1) FACETED REPRESENTATIVE TRAJECTORIES
 # ============================================================
 
-scenario_levels_traj <- c("A", "B")
-scenario_labels_traj <- c("A (monostable)", "B (bistable)")
+scenario_levels_traj <- c("M", "B")
+scenario_labels_traj <- c("M (monostable)", "B (bistable)")
 shock_levels_traj    <- c("No", "Yes")
 shock_labels_traj    <- c("No shocks", "Shocks")
 
 sim_rep_all <- bind_rows(
-  sim_A_rep  %>% mutate(scenario = "A", shocks = "No"),
-  sim_AS_rep %>% mutate(scenario = "A", shocks = "Yes"),
+  sim_A_rep  %>% mutate(scenario = "M", shocks = "No"),
+  sim_AS_rep %>% mutate(scenario = "M", shocks = "Yes"),
   sim_B0_rep %>% mutate(scenario = "B", shocks = "No"),
   sim_BS_rep %>% mutate(scenario = "B", shocks = "Yes")
 ) %>%
@@ -282,7 +282,7 @@ xlab_grob <- wrap_elements(
   full = textGrob("Context load  P", gp = gpar(fontsize = 11))
 )
 
-row_A  <- wrap_elements(full = strip_cell("A (monostable)", rotate = 270))
+row_M  <- wrap_elements(full = strip_cell("M (monostable)", rotate = 270))
 row_B  <- wrap_elements(full = strip_cell("B (bistable)",   rotate = 270))
 
 col_no <- wrap_elements(full = strip_cell("No shocks"))
@@ -298,7 +298,7 @@ leg_h    <- 0.16
 facet_overlay_right_strips <-
   wrap_plots(
     a = col_no, b = col_sh, c = plot_spacer(),
-    d = pA,     e = pAS,    f = row_A,
+    d = pA,     e = pAS,    f = row_M,
     g = pB0,    h = pBS,    i = row_B,
     j = xlab_grob, k = plot_spacer(),
     l = ga, m = plot_spacer(),
@@ -331,20 +331,20 @@ fig_overlay_faceted <- cowplot::ggdraw() +
 
 fig_overlay_faceted
 
-# ggsave("img/example_overlay.pdf", fig_overlay_faceted, width = 10, height = 7)
+# ggsave("img/example_overlay_M.pdf", fig_overlay_faceted, width = 10, height = 7)
 
 # ============================================================
 # 3) FACETED ENSEMBLE FIGURE
 # ============================================================
 
 meta_ens <- tibble::tibble(
-  key      = c("A0", "AS", "B0", "BS"),
+  key      = c("M0", "MS", "B0", "BS"),
   res      = list(res_A, res_AS, res_B0, res_BS),
-  scenario = c("A (monostable)", "A (monostable)", "B (bistable)", "B (bistable)"),
+  scenario = c("M (monostable)", "M (monostable)", "B (bistable)", "B (bistable)"),
   shocks   = c("No shocks", "Shocks", "No shocks", "Shocks")
 ) %>%
   mutate(
-    scenario = factor(scenario, levels = c("A (monostable)", "B (bistable)")),
+    scenario = factor(scenario, levels = c("M (monostable)", "B (bistable)")),
     shocks   = factor(shocks,   levels = c("No shocks", "Shocks"))
   )
 
@@ -449,13 +449,13 @@ p_ens <- ggplot(long_ens, aes(t, value, colour = group)) +
 
 p_ens
 
-# ggsave("img/ensemble_ts2.pdf", p_ens, width = 10, height = 9)
+# ggsave("img/ensemble_ts2_M.pdf", p_ens, width = 10, height = 9)
 
 # ============================================================
 # 4) HEATMAP FIGURE 
 # ============================================================
 
-heat_zoom <- readRDS("res_clean/heat_zoom_noshock_hyst2.rds") |>
+heat_zoom <- readRDS("res/heatmaps/heat_zoom_noshock_hyst2.rds") |>
   mutate(
     betaJ  = as.numeric(betaJ),
     P_base = as.numeric(P_base)
@@ -509,7 +509,7 @@ p_frac <- ggplot(heat_zoom, aes(betaJ, P_base)) +
 p_sw <- ggplot(heat_zoom, aes(betaJ, P_base)) +
   geom_tile(aes(fill = Switches)) +
   scale_fill_viridis_c(
-    option = "plasma",
+    option = "viridis",
     trans = "sqrt",
     name = expression(N[switch]),
     guide = cb_sw
