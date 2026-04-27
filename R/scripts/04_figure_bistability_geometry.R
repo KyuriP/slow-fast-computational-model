@@ -235,7 +235,7 @@ panel_A <- ggplot() +
   labs(
     title = expression(paste("(A) Fixed-point geometry: ", beta * J < 4, " vs ", beta * J > 4)),
     subtitle = expression(paste("Fixed points satisfy ", m == F(m * ";" * P), ".")),
-    x = "Mean burden m",
+    x = "Mean symptom level m",
     y = "Update map F(m;P)",
     colour = NULL
   ) +
@@ -292,7 +292,7 @@ panel_B <- ggplot() +
     title = expression("(B) Bifurcation diagram " * m^"*" * "(P)  (" * beta * J > 4 * ")"),
     subtitle = "Grey band: bistable window. Dashed: unstable equilibrium.",
     x = "Slow state P (threshold shift)",
-    y = expression("Equilibrium mean burden " * m^"*")
+    y = expression("Equilibrium mean symptom level " * m^"*")
   ) +
   theme_minimal(base_size = 18) +
   theme(legend.position = "top")
