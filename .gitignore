@@ -11,3 +11,4 @@ quarto-docs/**/figure-html/
 quarto-docs/**/libs/
 
 *.html
+network_estimation_check_writeup.md
