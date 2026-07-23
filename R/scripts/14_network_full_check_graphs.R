@@ -24,6 +24,7 @@
 
 suppressPackageStartupMessages({
   library(qgraph)
+  library(parallel)
 })
 if (!requireNamespace("matrixStats", quietly = TRUE)) install.packages("matrixStats")
 suppressPackageStartupMessages(library(matrixStats))
@@ -79,15 +80,26 @@ build_dgp <- function(dgp_seed) {
   storage.mode(states) <- "double"
   quad_base <- 0.5 * rowSums((states %*% W_true) * states)
 
+  # NOTE on speed: sample_states() is called once per timestep, and for a
+  # single replicate here that means ~3001 calls (burn_in + W). Each call
+  # does elementwise arithmetic on a 4096 (2^N states) x n_ind matrix.
+  # sweep() is convenient but has real per-call overhead (S3 dispatch +
+  # a fresh allocation every time) that adds up over tens of thousands of
+  # calls. Replaced with direct vector-recycling arithmetic below, which
+  # is numerically identical to the sweep() version (same floating-point
+  # result) but avoids that overhead -- this is a pure speed fix, not a
+  # change to the model or its randomness (rnorm/runif calls untouched).
   sample_states <- function(theta_matrix) {
     n_person <- nrow(theta_matrix)
+    n_states <- nrow(states)
     linear <- states %*% t(theta_matrix)
-    logp <- sweep(linear, 1, quad_base, "+")
-    logp <- sweep(logp, 2, matrixStats::colMaxs(logp), "-")
-    p <- exp(logp); p <- sweep(p, 2, colSums(p), "/")
+    logp <- linear + quad_base                                  # recycles by row (length == nrow)
+    logp <- logp - rep(matrixStats::colMaxs(logp), each = n_states)
+    p <- exp(logp)
+    p <- p / rep(colSums(p), each = n_states)
     cdf <- matrixStats::colCumsums(p)
     u <- runif(n_person)
-    below <- sweep(cdf, 2, u, FUN = "<")
+    below <- cdf < rep(u, each = n_states)
     idx <- colSums(below) + 1L
     states[idx, , drop = FALSE]
   }
@@ -155,22 +167,49 @@ simulate_coupled_window <- function(net_gen, P_base, n_ind, b, sigma_P, burn_in,
 # ------------------------------------------------------------------------
 n_reps_illustration <- 20L
 
-cat(sprintf("Simulating representative condition: dgp=%d, sigma_P=%.2f, W=%d, high-baseline group, %d replicates...\n",
-            dgp_rep, sigma_P_rep, W_rep, n_reps_illustration))
+# The 20 replicates are fully independent (different RNG seed, same dgp/
+# condition) -- there is no reason to run them one after another. Each
+# replicate is the expensive part (~3001-timestep simulation), while
+# combining the 20 fitted matrices at the end is trivial. We therefore
+# fan the replicate loop out across cores: on Mac/Linux this uses
+# mclapply (fork-based, no data copying needed since child processes
+# inherit the parent's memory); on Windows (no fork) we fall back to a
+# PSOCK cluster with parLapply, exporting only what each worker needs.
+n_cores <- max(1L, parallel::detectCores() - 1L)
+cat(sprintf("Simulating representative condition: dgp=%d, sigma_P=%.2f, W=%d, high-baseline group, %d replicates on %d cores...\n",
+            dgp_rep, sigma_P_rep, W_rep, n_reps_illustration, n_cores))
 
 net_gen <- build_dgp(dgp_rep)
 W_true <- net_gen$W_true
 
-W_raw_acc <- matrix(0, N, N)
-W_adj_acc <- matrix(0, N, N)
-for (r in seq_len(n_reps_illustration)) {
+run_one_rep <- function(r) {
   set.seed(900000L * dgp_rep + 1000L * r + 100L * W_rep + round(sigma_P_rep * 1000))
   res <- simulate_coupled_window(net_gen, P_base_high, n_per_group, b_real, sigma_P_rep, burn_in_steps, W_rep)
-  W_raw_acc <- W_raw_acc + fit_edges(res$S_obs)
-  W_adj_acc <- W_adj_acc + fit_edges(res$S_obs, res$Pbar_W)
-  cat(".")
+  list(W_raw = fit_edges(res$S_obs), W_adj = fit_edges(res$S_obs, res$Pbar_W))
 }
-cat("\n")
+
+t0 <- Sys.time()
+if (.Platform$OS.type == "unix") {
+  rep_results <- parallel::mclapply(seq_len(n_reps_illustration), run_one_rep, mc.cores = n_cores)
+} else {
+  cl <- parallel::makeCluster(n_cores)
+  on.exit(parallel::stopCluster(cl), add = TRUE)
+  parallel::clusterExport(cl, c("net_gen", "P_base_high", "n_per_group", "b_real", "sigma_P_rep",
+                                 "burn_in_steps", "W_rep", "dgp_rep", "simulate_coupled_window",
+                                 "fit_edges", "N", "lambda_m", "m_star", "kappa", "dt"),
+                           envir = environment())
+  parallel::clusterEvalQ(cl, suppressPackageStartupMessages(library(matrixStats)))
+  rep_results <- parallel::parLapply(cl, seq_len(n_reps_illustration), run_one_rep)
+}
+cat(sprintf("Replicates done in %.1f sec.\n", as.numeric(Sys.time() - t0, units = "secs")))
+
+# Guard against a failed replicate silently corrupting the average (e.g. a
+# worker error would otherwise show up as a non-list/NULL entry).
+ok <- vapply(rep_results, function(x) is.list(x) && !is.null(x$W_raw), logical(1))
+if (!all(ok)) stop(sprintf("%d of %d replicates failed -- check errors above.", sum(!ok), n_reps_illustration))
+
+W_raw_acc <- Reduce(`+`, lapply(rep_results, `[[`, "W_raw"))
+W_adj_acc <- Reduce(`+`, lapply(rep_results, `[[`, "W_adj"))
 
 W_raw <- W_raw_acc / n_reps_illustration
 W_adj <- W_adj_acc / n_reps_illustration
