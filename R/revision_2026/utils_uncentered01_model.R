@@ -30,3 +30,36 @@ symptom_burden <- function(S) {
 active_fraction <- function(S) {
   mean(S)
 }
+
+# ------------------------------------------------------------------------
+# Network estimator: nodewise logistic regression, symmetrized.
+# Adapted unchanged (logic-wise) from fit_edges() in
+# R/scripts/13_network_full_check.R -- reproduced here rather than sourced
+# from that file, since 13_network_full_check.R is a protected/untouched
+# legacy script tied to the pre-revision manuscript. If Pvec is supplied,
+# each nodewise regression conditions on it (context-adjusted estimate);
+# if NULL, P is omitted (naive/pooled estimate, susceptible to omitted-
+# context confounding when the sample pools across different P values).
+# ------------------------------------------------------------------------
+fit_edges <- function(S, Pvec = NULL) {
+  N <- ncol(S)
+  beta <- matrix(0, N, N)
+  for (i in seq_len(N)) {
+    y <- S[, i]
+    if (sd(y) == 0) next
+    others <- setdiff(seq_len(N), i)
+    df <- as.data.frame(S[, others, drop = FALSE])
+    names(df) <- paste0("S", others)
+    df$y <- y
+    rhs <- names(df)[names(df) != "y"]
+    if (!is.null(Pvec)) { df$P <- Pvec; rhs <- c(rhs, "P") }
+    form <- as.formula(paste("y ~", paste(rhs, collapse = " + ")))
+    fit <- suppressWarnings(glm(form, data = df, family = binomial()))
+    cf <- coef(fit)
+    for (j in others) {
+      cname <- paste0("S", j)
+      if (cname %in% names(cf) && is.finite(cf[[cname]])) beta[i, j] <- cf[[cname]]
+    }
+  }
+  (beta + t(beta)) / 2
+}
