@@ -37,7 +37,11 @@ tau <- c(
   concentration = -2.30,
   psychomotor   = -3.00,
   suicidal      = -4.00
-)
+) + 1.3  # pilot adjustment (was too floor-heavy at the original values --
+         # mean_m stayed under 0.14 even at the high-context condition;
+         # +1.3 is a first attempt at getting the middle condition closer
+         # to mean_m ~ 0.3-0.4). Revert to the un-shifted values above if
+         # this overshoots into ceiling saturation instead.
 
 gamma <- c(
   anhedonia     = 0.90,
