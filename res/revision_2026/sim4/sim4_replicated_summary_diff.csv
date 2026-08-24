@@ -1,0 +1,2 @@
+"diff_global_strength_mean","diff_global_strength_se","diff_mae_all_mean","diff_mae_all_se","diff_mae_true_zero_mean","diff_mae_true_zero_se","diff_mae_true_nonzero_mean","diff_mae_true_nonzero_se","diff_phantom_mean","diff_phantom_se","pct_reps_naive_gt_adjusted_gs","pct_reps_naive_gt_adjusted_mtz","n_reps"
+1.19282311851826,0.0454859135177804,0.0181316901809023,0.00126059598878422,0.019310807432171,0.00142354325497328,0.0150659853276035,0.00305836216614686,3.13333333333333,0.443946080741078,100,100,30
