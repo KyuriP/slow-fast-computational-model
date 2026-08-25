@@ -166,27 +166,38 @@ plot_one <- function(W, title, edge_color_mat = NULL) {
   do.call(qgraph, args)
 }
 
-# 2026-08-25: legend strip removed per review -- the edge-colour key and
-# PHQ-9 abbreviation key now live in the LaTeX caption only (as they did
-# before the earlier design pass), not as a 4th plotted row. Back to a
-# plain 3-panel layout.
+# 2026-08-25: the 3-colour edge-legend row was dropped (redundant with the
+# caption, and the reason it was removed), but the PHQ-9 abbreviation key
+# was explicitly requested back -- it's genuinely useful in-figure (readers
+# shouldn't have to hold ANH/DEP/SLP/... in their head or flip to the
+# caption) and isn't the cluttered part. Kept as a single slim text line,
+# not a full legend() row.
+abbrev_key <- paste(sprintf("%s = %s", phq_abbrev, names(phq_abbrev)), collapse = "; ")
+
+draw_abbrev_strip <- function() {
+  par(mar = c(0, 0, 0, 0))
+  plot.new()
+  text(0.5, 0.5, abbrev_key, cex = 0.75, col = "grey30")
+}
+
 draw_trio <- function() {
-  layout(t(1:3))
+  layout(matrix(c(1, 2, 3, 4, 4, 4), nrow = 2, byrow = TRUE), heights = c(3.1, 0.32))
   plot_one(W_true_plot, "(A) True coupling")
   plot_one(W_naive_plot, "(B) Estimated network, P omitted", edge_col_naive)
   plot_one(W_adjusted_plot, "(C) Estimated network, P included", edge_col_adjusted)
+  draw_abbrev_strip()
 }
 
 dir.create("figs/revision_2026", recursive = TRUE, showWarnings = FALSE)
 
-# Canvas back to a single-row height now that the legend row is gone
-# (9.2x3.65 -> 9.2x3.1) -- width and margins/vsize from the readability
-# pass are kept, only the extra legend-row height is dropped.
-pdf("figs/revision_2026/Figure4_network_trio.pdf", width = 9.2, height = 3.1)
+# Canvas height nudged back up just enough for the slim abbreviation row
+# (9.2x3.1 -> 9.2x3.42) -- much less than the earlier full legend row
+# needed (3.65), since this is one line of text, not a legend + key.
+pdf("figs/revision_2026/Figure4_network_trio.pdf", width = 9.2, height = 3.42)
 draw_trio()
 dev.off()
 
-png("figs/revision_2026/Figure4_network_trio.png", width = 9.2, height = 3.1, units = "in", res = 220)
+png("figs/revision_2026/Figure4_network_trio.png", width = 9.2, height = 3.42, units = "in", res = 220)
 draw_trio()
 dev.off()
 

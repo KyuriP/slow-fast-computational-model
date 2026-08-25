@@ -89,8 +89,8 @@ peak_labels <- prop_tbl |>
   ungroup()
 
 pA <- ggplot(prop_tbl, aes(x = M, y = prop, colour = P_group, group = P_group)) +
-  geom_line(linewidth = 0.75) +
-  geom_point(size = 2.0) +
+  geom_line(linewidth = 0.85) +
+  geom_point(size = 2.3) +
   # geom_label (not geom_text): the three curves cross each other near
   # each peak, so plain text sat directly on top of a differently-colored
   # line behind it and read as "crossed with the graph." A borderless,
@@ -99,7 +99,7 @@ pA <- ggplot(prop_tbl, aes(x = M, y = prop, colour = P_group, group = P_group)) 
   geom_label(
     data = peak_labels,
     aes(x = M, y = prop, label = P_group),
-    vjust = -0.65, size = 3.1, fontface = "plain", show.legend = FALSE,
+    vjust = -0.65, size = 3.6, fontface = "plain", show.legend = FALSE,
     label.size = 0, label.padding = unit(0.12, "lines"),
     fill = scales::alpha("white", 0.82)
   ) +
@@ -111,8 +111,16 @@ pA <- ggplot(prop_tbl, aes(x = M, y = prop, colour = P_group, group = P_group)) 
   theme_pub(base_size = 10.5) +
   # Right margin trimmed (theme_pub's default is 14pt) -- combined with
   # panel B's own trimmed left margin below, this closes up the visible
-  # gap between A and B.
-  theme(plot.margin = margin(10, 4, 10, 10))
+  # gap between A and B. Axis text/title and title sizes bumped locally
+  # (theme_pub()'s versions are fixed global constants) since the panel
+  # read as generally too small; matches the same local-override bump
+  # applied to panel B.
+  theme(
+    plot.margin = margin(10, 4, 10, 10),
+    axis.text = element_text(size = 10.5),
+    axis.title = element_text(size = 11.5),
+    plot.title = element_text(size = 12)
+  )
 
 # ------------------------------------------------------------------------
 # 3. Panel B: compact summary contrast. Mean burden as point + 95%
@@ -193,18 +201,22 @@ pB <- ggplot(summ_corrected, aes(y = P_group, x = mean_M, colour = P_group)) +
     ),
     linewidth = 0.75
   ) +
-  geom_point(size = 2.8) +
+  geom_point(size = 3.2) +
+  # Offset widened (was mean_M + 0.10, size 3.0) -- at the larger point
+  # size below, 0.10 wasn't enough clearance and the mean-value text
+  # (e.g. "3.56") visually ran into/behind the point marker itself. Text
+  # also enlarged along with everything else in this panel.
   geom_text(
-    aes(x = mean_M + 0.10, label = mean_label),
+    aes(x = mean_M + 0.18, label = mean_label),
     hjust = 0,
-    size = 3.0,
+    size = 3.5,
     colour = "black"
   ) +
   geom_vline(xintercept = sep_x, colour = "grey85", linewidth = 0.4) +
   geom_text(
     aes(x = label_x, label = high_label),
     hjust = 0,
-    size = 3.0,
+    size = 3.5,
     colour = "grey35"
   ) +
   # Column headers, drawn once (not per-row) just above the top data row --
@@ -212,10 +224,10 @@ pB <- ggplot(summ_corrected, aes(y = P_group, x = mean_M, colour = P_group)) +
   # column is the mean +/- 95% CI, the right column is a separate quantity
   # (probability of high activation), not a continuation of the same axis.
   annotate("text", x = 0.15, y = n_grp + 0.62,
-           label = "Mean (95% CI)", hjust = 0, size = 2.7, colour = "grey35",
+           label = "Mean (95% CI)", hjust = 0, size = 3.0, colour = "grey35",
            fontface = "italic") +
   annotate("text", x = label_x, y = n_grp + 0.62,
-           label = "Pr(5+ active)", hjust = 0, size = 2.7, colour = "grey35",
+           label = "Pr(5+ active)", hjust = 0, size = 3.0, colour = "grey35",
            fontface = "italic") +
   scale_colour_manual(values = pal_context_display, guide = "none") +
   scale_x_continuous(
@@ -230,17 +242,32 @@ pB <- ggplot(summ_corrected, aes(y = P_group, x = mean_M, colour = P_group)) +
     y = NULL
   ) +
   theme_pub(base_size = 10.5) +
+  # theme_pub()'s axis.text/axis.title sizes are fixed GLOBAL constants
+  # (base_size_axis_text=9, base_size_axis_title=10, from
+  # theme_publication.R) regardless of the base_size argument passed in --
+  # bumped locally here since the panel read as generally too small,
+  # without touching those shared constants (Figure 3 relies on them at
+  # their current size).
   theme(
     panel.grid.major.y = element_blank(),
-    axis.text.y = element_text(size = 10, colour = "black"),
+    axis.text.y = element_text(size = 11, colour = "black"),
+    axis.text.x = element_text(size = 10.5),
+    axis.title.x = element_text(size = 11.5),
+    plot.title = element_text(size = 12),
     plot.margin = margin(14, 10, 8, 2)
   )
 
 # ------------------------------------------------------------------------
 # 4. Combine + save -- A wider (it's the main visual claim), B narrower
 #    and treated as compact numeric support, not a co-equal panel.
+#
+# 2026-08-25: narrowing B's share (to 1.65:0.85) to close the "A and B look
+# far apart" gap made B read as squished instead -- reverted to an even
+# 1:1 split per review. The gap-closing fix that actually mattered was the
+# margin trim above (A's right margin, B's left margin); the width-ratio
+# change was a second lever that overcorrected in the other direction.
 # ------------------------------------------------------------------------
-fig2 <- pA + pB + plot_layout(widths = c(1.5, 1))
+fig2 <- pA + pB + plot_layout(widths = c(1, 1))
 
 dir.create("figs/revision_2026", recursive = TRUE, showWarnings = FALSE)
 ggsave("figs/revision_2026/Figure2_context_baseline.pdf", fig2, width = 9.6, height = 4.1)
