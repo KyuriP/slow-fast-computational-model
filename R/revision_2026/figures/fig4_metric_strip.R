@@ -110,7 +110,7 @@ pD <- ggplot(summary_by_arm, aes(x = arm, y = gs_excess_mean, colour = arm)) +
   theme(legend.position = "none", axis.text.x = element_text(size = 8.3))
 
 # ------------------------------------------------------------------------
-# Panel E: error on truly absent edges
+# Panel E: deviation on truly absent edges
 # ------------------------------------------------------------------------
 pE <- ggplot(summary_by_arm, aes(x = arm, y = mtz_mean, colour = arm)) +
   geom_pointrange(
@@ -135,7 +135,7 @@ pE <- ggplot(summary_by_arm, aes(x = arm, y = mtz_mean, colour = arm)) +
     expand = expansion(mult = c(0.02, 0.06))
   ) +
   labs(
-    title = panel_title("E", "Error on absent edges"),
+    title = panel_title("E", "Deviation on absent edges"),
     x = NULL,
     y = "MAE on absent edges"
   ) +
