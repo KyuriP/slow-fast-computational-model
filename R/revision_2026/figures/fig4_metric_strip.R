@@ -48,29 +48,25 @@ by_arm <- read.csv("res/revision_2026/sim4/sim4_replicated_by_arm.csv") |>
 se <- function(x) sd(x) / sqrt(length(x))
 
 # ------------------------------------------------------------------------
-# 2026-08-25 readability pass: panels D/E were printing visibly smaller
-# than the network trio's (A)(B)(C) titles/labels once both figures were
-# placed in the compiled manuscript. Root cause is print-size arithmetic,
-# not a visual illusion: the trio is included at \textwidth from an
-# 8.8in-wide native PDF (scale factor approx 6.5/8.8 = 0.74), while this
-# strip is included at 0.82\textwidth from an 8.0in-wide native PDF (scale
-# factor approx (0.82*6.5)/8.0 = 0.67) -- a narrower target width AND a
-# smaller native-to-target ratio, compounding on top of theme_pub()'s
-# already-fixed base_size_panel_title=10.5. Net effect: trio titles print
-# at roughly 10.5*0.74 ~= 8.9pt-equivalent (qgraph's cex-based sizing),
-# this strip's titles were printing at roughly 10.5*0.67 ~= 7.0pt. These
-# local overrides target a comparable ~13pt native size here so that,
-# after this script's own 0.67x compiled-document shrink, the final
-# printed size lands close to the trio's ~8.9pt rather than ~7.0pt.
-# Axis titles/text and the numeric point-labels are scaled up by the same
-# ratio (~1.27x) for internal consistency within this one figure. These
-# are LOCAL overrides (not changes to theme_publication.R's shared
-# constants), since Figures 2 and 3 are placed at different LaTeX widths
-# with already-tuned sizing that this ratio doesn't apply to.
-title_size_strip <- 13.3
-axis_title_strip <- 12.5
-axis_text_strip  <- 11.5
-label_size_strip <- 3.8   # geom_text size is in mm, not pt
+# 2026-08-25 readability pass, revised: this strip is now placed at the
+# SAME LaTeX width as the network trio (\textwidth, not 0.82\textwidth as
+# before) so panels D/E print noticeably larger and their error bars are
+# easier to read at a glance -- per review, page-width match was preferred
+# over a narrower, taller-relative-to-width strip. With both figures now
+# sharing the same width-based scale factor (approx 6.5/9.2 ~= 0.71, using
+# the trio's current 9.2in native width as the reference), the earlier
+# 13.3pt title override (calibrated for the narrower 0.67x placement) would
+# now overshoot and print LARGER than the trio's titles. Sizes below are
+# recalibrated down for the new, more favorable scale factor while still
+# landing at a comparable final size to the trio (~9pt titles).
+# Canvas native size bumped slightly (8.0x2.6 -> 8.4x2.75) so that, once
+# both figures share the same print width, this strip's height comes out
+# close to but slightly less than the trio's (native aspect ratio
+# 2.75/8.4 ~= 0.327 vs. the trio's current 3.1/9.2 ~= 0.337).
+title_size_strip <- 12.0
+axis_title_strip <- 11.2
+axis_text_strip  <- 10.2
+label_size_strip <- 3.4   # geom_text size is in mm, not pt
 
 # Matches the locked Sim 4 results text (10 edges, weights 0.20-0.45);
 # not recomputed here to keep this script's only input the replicated CSV.
@@ -108,9 +104,9 @@ pD <- ggplot(summary_by_arm, aes(x = arm, y = gs_excess_mean, colour = arm)) +
   geom_pointrange(
     aes(ymin = gs_excess_mean - gs_excess_se,
         ymax = gs_excess_mean + gs_excess_se),
-    linewidth = 0.65,
-    size = 0.55,
-    alpha = 0.85
+    linewidth = 0.85,
+    size = 0.75,
+    alpha = 0.9
   ) +
   geom_text(
     aes(label = sprintf("%.2f", gs_excess_mean)),
@@ -186,20 +182,24 @@ dir.create("figs/revision_2026", recursive = TRUE, showWarnings = FALSE)
 ggsave(
   "figs/revision_2026/Figure4_metric_strip.pdf",
   fig4_metric_strip,
-  width = 8.0,
-  height = 2.6
+  width = 8.4,
+  height = 2.75
 )
 
 ggsave(
   "figs/revision_2026/Figure4_metric_strip.png",
   fig4_metric_strip,
-  width = 8.0,
-  height = 2.6,
+  width = 8.4,
+  height = 2.75,
   dpi = 300
 )
 
 cat("Done. Files:\n")
 cat("  figs/revision_2026/Figure4_metric_strip.pdf (+ .png)\n")
+cat("\nIMPORTANT: this is now meant to be placed at \\textwidth in LaTeX, same\n")
+cat("as the network trio -- update the \\includegraphics line for this file\n")
+cat("from width=0.82\\textwidth to width=\\textwidth (or drop the width arg\n")
+cat("if the trio's own includegraphics doesn't specify one explicitly).\n")
 cat("\nCombine with fig4_network_trio.R's output (Figure4_network_trio.pdf,\n")
 cat("panels A-C) as Figure 4's full panel set -- assembled in LaTeX/Overleaf,\n")
 cat("not composited in R (qgraph base-R graphics + ggplot don't combine\n")

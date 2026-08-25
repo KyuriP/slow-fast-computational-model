@@ -145,10 +145,17 @@ plot_one <- function(W, title, edge_color_mat = NULL) {
   args <- list(
     input = W, layout = L, maximum = max_edge, fade = TRUE,
     labels = short_labels,
-    edge.width = 1.3, vsize = 13, label.cex = 1.05,
+    edge.width = 1.3, vsize = 12, label.cex = 1.05,
     title = title, title.cex = 1.08,
     theme = "classic", DoNotPlot = FALSE,
-    mar = c(1, 1, 2, 1)
+    # Margins widened (was c(1,1,2,1)) to compensate for the larger vsize:
+    # the fixed spring layout's node positions were computed back when
+    # vsize=9.5, so peripheral nodes (APP at top, SLP on the right) sat
+    # close to the plot boundary already -- bigger circles at the same
+    # positions with the same margin pushed past the edge, most visibly
+    # in panel C. More margin pulls the drawn plotting region inward
+    # without moving/shrinking the nodes themselves.
+    mar = c(2, 2.2, 3.2, 2.2)
   )
   if (is.null(edge_color_mat)) {
     args$posCol <- qgraph_pos_col
@@ -159,43 +166,27 @@ plot_one <- function(W, title, edge_color_mat = NULL) {
   do.call(qgraph, args)
 }
 
-# ------------------------------------------------------------------------
-# Legend strip: a 4th layout row explaining edge colour coding (true/
-# recovered edge vs. phantom edge vs. negative edge) and the PHQ-9
-# abbreviation key. Previously this information only lived in the LaTeX
-# caption, with no in-figure legend at all -- readers had to hold the
-# color mapping in their head or flip to the caption every time.
-# ------------------------------------------------------------------------
-legend_labels <- c("Edge present in the true network",
-                    "Phantom edge (absent in truth, present in this estimate)",
-                    "Negative edge")
-legend_cols <- c(qgraph_pos_col, phantom_col, qgraph_neg_col)
-abbrev_key <- paste(sprintf("%s = %s", phq_abbrev, names(phq_abbrev)), collapse = "; ")
-
-draw_legend_strip <- function() {
-  par(mar = c(0, 0, 0, 0))
-  plot.new()
-  legend("top", legend = legend_labels, col = legend_cols, lwd = 2.6, lty = 1,
-         seg.len = 1.6, horiz = TRUE, bty = "n", cex = 0.78,
-         text.col = "grey20", x.intersp = 0.6, xpd = NA)
-  mtext(abbrev_key, side = 1, line = -1.1, cex = 0.62, col = "grey40")
-}
-
+# 2026-08-25: legend strip removed per review -- the edge-colour key and
+# PHQ-9 abbreviation key now live in the LaTeX caption only (as they did
+# before the earlier design pass), not as a 4th plotted row. Back to a
+# plain 3-panel layout.
 draw_trio <- function() {
-  layout(matrix(c(1, 2, 3, 4, 4, 4), nrow = 2, byrow = TRUE), heights = c(2.9, 0.55))
+  layout(t(1:3))
   plot_one(W_true_plot, "(A) True coupling")
   plot_one(W_naive_plot, "(B) Estimated network, P omitted", edge_col_naive)
   plot_one(W_adjusted_plot, "(C) Estimated network, P included", edge_col_adjusted)
-  draw_legend_strip()
 }
 
 dir.create("figs/revision_2026", recursive = TRUE, showWarnings = FALSE)
 
-pdf("figs/revision_2026/Figure4_network_trio.pdf", width = 8.8, height = 3.45)
+# Canvas back to a single-row height now that the legend row is gone
+# (9.2x3.65 -> 9.2x3.1) -- width and margins/vsize from the readability
+# pass are kept, only the extra legend-row height is dropped.
+pdf("figs/revision_2026/Figure4_network_trio.pdf", width = 9.2, height = 3.1)
 draw_trio()
 dev.off()
 
-png("figs/revision_2026/Figure4_network_trio.png", width = 8.8, height = 3.45, units = "in", res = 220)
+png("figs/revision_2026/Figure4_network_trio.png", width = 9.2, height = 3.1, units = "in", res = 220)
 draw_trio()
 dev.off()
 

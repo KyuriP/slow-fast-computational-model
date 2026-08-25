@@ -108,7 +108,11 @@ pA <- ggplot(prop_tbl, aes(x = M, y = prop, colour = P_group, group = P_group)) 
   scale_y_continuous(labels = percent_format(accuracy = 1), expand = expansion(mult = c(0.02, 0.11))) +
   labs(title = panel_title("A", "Context level shifts symptom activation"),
        x = "Number of active symptoms (M)", y = "Probability") +
-  theme_pub(base_size = 10.5)
+  theme_pub(base_size = 10.5) +
+  # Right margin trimmed (theme_pub's default is 14pt) -- combined with
+  # panel B's own trimmed left margin below, this closes up the visible
+  # gap between A and B.
+  theme(plot.margin = margin(10, 4, 10, 10))
 
 # ------------------------------------------------------------------------
 # 3. Panel B: compact summary contrast. Mean burden as point + 95%
@@ -221,7 +225,7 @@ pB <- ggplot(summ_corrected, aes(y = P_group, x = mean_M, colour = P_group)) +
   ) +
   scale_y_discrete(expand = expansion(add = c(0.6, 1.0))) +
   labs(
-    title = panel_title("B", "Mean activation and probability of high burden"),
+    title = panel_title("B", "Mean activation by context"),
     x = "Mean number of active symptoms",
     y = NULL
   ) +
@@ -229,7 +233,7 @@ pB <- ggplot(summ_corrected, aes(y = P_group, x = mean_M, colour = P_group)) +
   theme(
     panel.grid.major.y = element_blank(),
     axis.text.y = element_text(size = 10, colour = "black"),
-    plot.margin = margin(14, 10, 8, 8)
+    plot.margin = margin(14, 10, 8, 2)
   )
 
 # ------------------------------------------------------------------------
