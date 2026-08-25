@@ -151,8 +151,8 @@ p1 <- ggplot(burden_all, aes(x = M, fill = condition)) +
   scale_fill_viridis_d(name = "Context (P)",
                         breaks = names(P_values),
                         labels = sprintf("%s (P=%.1f)", names(P_values), P_values)) +
-  labs(x = "Symptom burden (M = number of active symptoms)", y = "Count",
-       title = "Simulation 1: symptom burden distribution under fixed coupling",
+  labs(x = "Symptom activation (M = number of active symptoms)", y = "Count",
+       title = "Simulation 1: symptom activation distribution under fixed coupling",
        subtitle = sprintf("N=%d symptoms, same tau/omega/gamma across conditions, only P differs", N)) +
   theme_classic(base_size = 12) +
   theme(legend.position = "bottom")
@@ -183,7 +183,7 @@ p2 <- ggplot(trace_all, aes(x = sweep, y = M, group = chain)) +
   geom_line(alpha = 0.35, linewidth = 0.3) +
   geom_vline(xintercept = T_burn, linetype = "dashed", colour = "red") +
   facet_wrap(~condition, ncol = 1) +
-  labs(x = "Sweep", y = "Symptom burden (M)",
+  labs(x = "Sweep", y = "Symptom activation (M)",
        title = sprintf("Simulation 1: burn-in trace (%d example chains per condition)", n_trace_chains),
        subtitle = "Dashed red line = end of burn-in (T_burn). Traces should look flat/stationary by then.") +
   theme_classic(base_size = 12)
