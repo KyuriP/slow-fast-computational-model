@@ -127,6 +127,15 @@ edge_col_adjusted <- build_edge_colors(W_adjusted_plot, W_true_plot)
 # design-pass review -- smaller margins and a smaller export canvas
 # (12x4.3in -> 8.8x2.9in) remove the excess white space around the trio,
 # and larger relative node size (vsize) fills more of the freed-up room.
+#
+# 2026-08-25 readability pass: vsize raised 9.5 -> 13 and label.cex/
+# title.cex nudged up slightly (0.95->1.05, 1.0->1.08) -- nodes/labels
+# were reported hard to read at the original size once the figure was
+# scaled down to \textwidth in the compiled PDF. title.cex bumped to stay
+# visually consistent with the larger panel-D/E titles in
+# fig4_metric_strip.R once that script's own titles were enlarged to
+# compensate for its narrower (0.82\textwidth) placement -- see that
+# script's header note for the actual print-size arithmetic.
 plot_one <- function(W, title, edge_color_mat = NULL) {
   # qgraph()'s first formal argument is literally named `input` (not `x`
   # or the first positional slot in the usual S3-plot-method sense) --
@@ -136,10 +145,17 @@ plot_one <- function(W, title, edge_color_mat = NULL) {
   args <- list(
     input = W, layout = L, maximum = max_edge, fade = TRUE,
     labels = short_labels,
-    edge.width = 1.2, vsize = 9.5, label.cex = 0.95,
-    title = title, title.cex = 1.0,
+    edge.width = 1.3, vsize = 12, label.cex = 1.05,
+    title = title, title.cex = 1.08,
     theme = "classic", DoNotPlot = FALSE,
-    mar = c(1, 1, 2, 1)
+    # Margins widened (was c(1,1,2,1)) to compensate for the larger vsize:
+    # the fixed spring layout's node positions were computed back when
+    # vsize=9.5, so peripheral nodes (APP at top, SLP on the right) sat
+    # close to the plot boundary already -- bigger circles at the same
+    # positions with the same margin pushed past the edge, most visibly
+    # in panel C. More margin pulls the drawn plotting region inward
+    # without moving/shrinking the nodes themselves.
+    mar = c(2, 2.2, 3.2, 2.2)
   )
   if (is.null(edge_color_mat)) {
     args$posCol <- qgraph_pos_col
@@ -150,20 +166,39 @@ plot_one <- function(W, title, edge_color_mat = NULL) {
   do.call(qgraph, args)
 }
 
+# 2026-08-25: the 3-colour edge-legend row was dropped (redundant with the
+# caption, and the reason it was removed), but the PHQ-9 abbreviation key
+# was explicitly requested back -- it's genuinely useful in-figure (readers
+# shouldn't have to hold ANH/DEP/SLP/... in their head or flip to the
+# caption) and isn't the cluttered part. Kept as a single slim text line,
+# not a full legend() row.
+abbrev_key <- paste(sprintf("%s = %s", phq_abbrev, names(phq_abbrev)), collapse = "; ")
+
+draw_abbrev_strip <- function() {
+  par(mar = c(0, 0, 0, 0))
+  plot.new()
+  text(0.5, 0.5, abbrev_key, cex = 0.75, col = "grey30")
+}
+
+draw_trio <- function() {
+  layout(matrix(c(1, 2, 3, 4, 4, 4), nrow = 2, byrow = TRUE), heights = c(3.1, 0.32))
+  plot_one(W_true_plot, "(A) True coupling")
+  plot_one(W_naive_plot, "(B) Estimated network, P omitted", edge_col_naive)
+  plot_one(W_adjusted_plot, "(C) Estimated network, P included", edge_col_adjusted)
+  draw_abbrev_strip()
+}
+
 dir.create("figs/revision_2026", recursive = TRUE, showWarnings = FALSE)
 
-pdf("figs/revision_2026/Figure4_network_trio.pdf", width = 8.8, height = 2.9)
-layout(t(1:3))
-plot_one(W_true_plot, "(A) True coupling")
-plot_one(W_naive_plot, "(B) Estimated network, P omitted", edge_col_naive)
-plot_one(W_adjusted_plot, "(C) Estimated network, P included", edge_col_adjusted)
+# Canvas height nudged back up just enough for the slim abbreviation row
+# (9.2x3.1 -> 9.2x3.42) -- much less than the earlier full legend row
+# needed (3.65), since this is one line of text, not a legend + key.
+pdf("figs/revision_2026/Figure4_network_trio.pdf", width = 9.2, height = 3.42)
+draw_trio()
 dev.off()
 
-png("figs/revision_2026/Figure4_network_trio.png", width = 8.8, height = 2.9, units = "in", res = 220)
-layout(t(1:3))
-plot_one(W_true_plot, "(A) True coupling")
-plot_one(W_naive_plot, "(B) Estimated network, P omitted", edge_col_naive)
-plot_one(W_adjusted_plot, "(C) Estimated network, P included", edge_col_adjusted)
+png("figs/revision_2026/Figure4_network_trio.png", width = 9.2, height = 3.42, units = "in", res = 220)
+draw_trio()
 dev.off()
 
 cat(sprintf("True global strength: %.2f | Symptom-only: %.2f | Context-adjusted: %.2f\n",
