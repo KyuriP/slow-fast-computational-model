@@ -91,10 +91,17 @@ peak_labels <- prop_tbl |>
 pA <- ggplot(prop_tbl, aes(x = M, y = prop, colour = P_group, group = P_group)) +
   geom_line(linewidth = 0.75) +
   geom_point(size = 2.0) +
-  geom_text(
+  # geom_label (not geom_text): the three curves cross each other near
+  # each peak, so plain text sat directly on top of a differently-colored
+  # line behind it and read as "crossed with the graph." A borderless,
+  # semi-opaque white label punches a clean halo behind the text so it
+  # stays legible regardless of what's plotted underneath.
+  geom_label(
     data = peak_labels,
     aes(x = M, y = prop, label = P_group),
-    vjust = -0.75, size = 3.1, fontface = "plain", show.legend = FALSE
+    vjust = -0.65, size = 3.1, fontface = "plain", show.legend = FALSE,
+    label.size = 0, label.padding = unit(0.12, "lines"),
+    fill = scales::alpha("white", 0.82)
   ) +
   scale_colour_manual(values = pal_context_display, guide = "none") +
   scale_x_continuous(breaks = 0:9, expand = expansion(mult = c(0.02, 0.04))) +
@@ -154,6 +161,18 @@ summ_corrected <- chain_summary |>
 # widen the multiplier below rather than shrinking the text.
 label_x <- max(summ_corrected$mean_M) + 0.95
 x_axis_max <- label_x + 2.3
+sep_x   <- max(summ_corrected$mean_M) + 0.62   # light divider between the
+                                                # mean-value column and the
+                                                # Pr(5+ active) column
+
+# The x-SCALE genuinely runs to x_axis_max (kept, proven not to clip the
+# label text -- see the 2026-08-25 fix note above), but only breaks/ticks
+# 0:4 are drawn, so the space past 4 was unlabeled and read as "why does
+# the axis just stop at 4." Rather than change the scale mechanics again,
+# the fix here is to stop leaving that region unexplained: a light
+# separator plus explicit "Pr(5+ active)" column header now marks it as a
+# deliberate second field, not a truncated axis.
+n_grp <- nlevels(summ_corrected$P_group)
 
 pB <- ggplot(summ_corrected, aes(y = P_group, x = mean_M, colour = P_group)) +
   geom_segment(
@@ -177,20 +196,32 @@ pB <- ggplot(summ_corrected, aes(y = P_group, x = mean_M, colour = P_group)) +
     size = 3.0,
     colour = "black"
   ) +
+  geom_vline(xintercept = sep_x, colour = "grey85", linewidth = 0.4) +
   geom_text(
     aes(x = label_x, label = high_label),
     hjust = 0,
     size = 3.0,
     colour = "grey35"
   ) +
+  # Column headers, drawn once (not per-row) just above the top data row --
+  # these are what actually answer "what does panel B mean": the left
+  # column is the mean +/- 95% CI, the right column is a separate quantity
+  # (probability of high activation), not a continuation of the same axis.
+  annotate("text", x = 0.15, y = n_grp + 0.62,
+           label = "Mean (95% CI)", hjust = 0, size = 2.7, colour = "grey35",
+           fontface = "italic") +
+  annotate("text", x = label_x, y = n_grp + 0.62,
+           label = "Pr(5+ active)", hjust = 0, size = 2.7, colour = "grey35",
+           fontface = "italic") +
   scale_colour_manual(values = pal_context_display, guide = "none") +
   scale_x_continuous(
     limits = c(0, x_axis_max),
     breaks = 0:4,
     expand = expansion(mult = c(0.01, 0.01))
   ) +
+  scale_y_discrete(expand = expansion(add = c(0.6, 1.0))) +
   labs(
-    title = panel_title("B", "Summary by context"),
+    title = panel_title("B", "Mean activation and probability of high burden"),
     x = "Mean number of active symptoms",
     y = NULL
   ) +
@@ -198,7 +229,7 @@ pB <- ggplot(summ_corrected, aes(y = P_group, x = mean_M, colour = P_group)) +
   theme(
     panel.grid.major.y = element_blank(),
     axis.text.y = element_text(size = 10, colour = "black"),
-    plot.margin = margin(8, 10, 8, 8)
+    plot.margin = margin(14, 10, 8, 8)
   )
 
 # ------------------------------------------------------------------------

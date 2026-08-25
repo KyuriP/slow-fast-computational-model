@@ -127,6 +127,15 @@ edge_col_adjusted <- build_edge_colors(W_adjusted_plot, W_true_plot)
 # design-pass review -- smaller margins and a smaller export canvas
 # (12x4.3in -> 8.8x2.9in) remove the excess white space around the trio,
 # and larger relative node size (vsize) fills more of the freed-up room.
+#
+# 2026-08-25 readability pass: vsize raised 9.5 -> 13 and label.cex/
+# title.cex nudged up slightly (0.95->1.05, 1.0->1.08) -- nodes/labels
+# were reported hard to read at the original size once the figure was
+# scaled down to \textwidth in the compiled PDF. title.cex bumped to stay
+# visually consistent with the larger panel-D/E titles in
+# fig4_metric_strip.R once that script's own titles were enlarged to
+# compensate for its narrower (0.82\textwidth) placement -- see that
+# script's header note for the actual print-size arithmetic.
 plot_one <- function(W, title, edge_color_mat = NULL) {
   # qgraph()'s first formal argument is literally named `input` (not `x`
   # or the first positional slot in the usual S3-plot-method sense) --
@@ -136,8 +145,8 @@ plot_one <- function(W, title, edge_color_mat = NULL) {
   args <- list(
     input = W, layout = L, maximum = max_edge, fade = TRUE,
     labels = short_labels,
-    edge.width = 1.2, vsize = 9.5, label.cex = 0.95,
-    title = title, title.cex = 1.0,
+    edge.width = 1.3, vsize = 13, label.cex = 1.05,
+    title = title, title.cex = 1.08,
     theme = "classic", DoNotPlot = FALSE,
     mar = c(1, 1, 2, 1)
   )
@@ -150,20 +159,44 @@ plot_one <- function(W, title, edge_color_mat = NULL) {
   do.call(qgraph, args)
 }
 
+# ------------------------------------------------------------------------
+# Legend strip: a 4th layout row explaining edge colour coding (true/
+# recovered edge vs. phantom edge vs. negative edge) and the PHQ-9
+# abbreviation key. Previously this information only lived in the LaTeX
+# caption, with no in-figure legend at all -- readers had to hold the
+# color mapping in their head or flip to the caption every time.
+# ------------------------------------------------------------------------
+legend_labels <- c("Edge present in the true network",
+                    "Phantom edge (absent in truth, present in this estimate)",
+                    "Negative edge")
+legend_cols <- c(qgraph_pos_col, phantom_col, qgraph_neg_col)
+abbrev_key <- paste(sprintf("%s = %s", phq_abbrev, names(phq_abbrev)), collapse = "; ")
+
+draw_legend_strip <- function() {
+  par(mar = c(0, 0, 0, 0))
+  plot.new()
+  legend("top", legend = legend_labels, col = legend_cols, lwd = 2.6, lty = 1,
+         seg.len = 1.6, horiz = TRUE, bty = "n", cex = 0.78,
+         text.col = "grey20", x.intersp = 0.6, xpd = NA)
+  mtext(abbrev_key, side = 1, line = -1.1, cex = 0.62, col = "grey40")
+}
+
+draw_trio <- function() {
+  layout(matrix(c(1, 2, 3, 4, 4, 4), nrow = 2, byrow = TRUE), heights = c(2.9, 0.55))
+  plot_one(W_true_plot, "(A) True coupling")
+  plot_one(W_naive_plot, "(B) Estimated network, P omitted", edge_col_naive)
+  plot_one(W_adjusted_plot, "(C) Estimated network, P included", edge_col_adjusted)
+  draw_legend_strip()
+}
+
 dir.create("figs/revision_2026", recursive = TRUE, showWarnings = FALSE)
 
-pdf("figs/revision_2026/Figure4_network_trio.pdf", width = 8.8, height = 2.9)
-layout(t(1:3))
-plot_one(W_true_plot, "(A) True coupling")
-plot_one(W_naive_plot, "(B) Estimated network, P omitted", edge_col_naive)
-plot_one(W_adjusted_plot, "(C) Estimated network, P included", edge_col_adjusted)
+pdf("figs/revision_2026/Figure4_network_trio.pdf", width = 8.8, height = 3.45)
+draw_trio()
 dev.off()
 
-png("figs/revision_2026/Figure4_network_trio.png", width = 8.8, height = 2.9, units = "in", res = 220)
-layout(t(1:3))
-plot_one(W_true_plot, "(A) True coupling")
-plot_one(W_naive_plot, "(B) Estimated network, P omitted", edge_col_naive)
-plot_one(W_adjusted_plot, "(C) Estimated network, P included", edge_col_adjusted)
+png("figs/revision_2026/Figure4_network_trio.png", width = 8.8, height = 3.45, units = "in", res = 220)
+draw_trio()
 dev.off()
 
 cat(sprintf("True global strength: %.2f | Symptom-only: %.2f | Context-adjusted: %.2f\n",

@@ -47,6 +47,31 @@ by_arm <- read.csv("res/revision_2026/sim4/sim4_replicated_by_arm.csv") |>
 
 se <- function(x) sd(x) / sqrt(length(x))
 
+# ------------------------------------------------------------------------
+# 2026-08-25 readability pass: panels D/E were printing visibly smaller
+# than the network trio's (A)(B)(C) titles/labels once both figures were
+# placed in the compiled manuscript. Root cause is print-size arithmetic,
+# not a visual illusion: the trio is included at \textwidth from an
+# 8.8in-wide native PDF (scale factor approx 6.5/8.8 = 0.74), while this
+# strip is included at 0.82\textwidth from an 8.0in-wide native PDF (scale
+# factor approx (0.82*6.5)/8.0 = 0.67) -- a narrower target width AND a
+# smaller native-to-target ratio, compounding on top of theme_pub()'s
+# already-fixed base_size_panel_title=10.5. Net effect: trio titles print
+# at roughly 10.5*0.74 ~= 8.9pt-equivalent (qgraph's cex-based sizing),
+# this strip's titles were printing at roughly 10.5*0.67 ~= 7.0pt. These
+# local overrides target a comparable ~13pt native size here so that,
+# after this script's own 0.67x compiled-document shrink, the final
+# printed size lands close to the trio's ~8.9pt rather than ~7.0pt.
+# Axis titles/text and the numeric point-labels are scaled up by the same
+# ratio (~1.27x) for internal consistency within this one figure. These
+# are LOCAL overrides (not changes to theme_publication.R's shared
+# constants), since Figures 2 and 3 are placed at different LaTeX widths
+# with already-tuned sizing that this ratio doesn't apply to.
+title_size_strip <- 13.3
+axis_title_strip <- 12.5
+axis_text_strip  <- 11.5
+label_size_strip <- 3.8   # geom_text size is in mm, not pt
+
 # Matches the locked Sim 4 results text (10 edges, weights 0.20-0.45);
 # not recomputed here to keep this script's only input the replicated CSV.
 true_gs <- 3.05
@@ -78,7 +103,7 @@ summary_by_arm <- by_arm |>
 # ------------------------------------------------------------------------
 pD <- ggplot(summary_by_arm, aes(x = arm, y = gs_excess_mean, colour = arm)) +
   geom_hline(yintercept = 0, linetype = "dashed", colour = "grey55", linewidth = 0.45) +
-  annotate("text", x = 0.58, y = 0, label = "No inflation", size = 2.4,
+  annotate("text", x = 0.58, y = 0, label = "No inflation", size = 2.9,
            colour = "grey45", hjust = 0, vjust = -0.6) +
   geom_pointrange(
     aes(ymin = gs_excess_mean - gs_excess_se,
@@ -91,7 +116,7 @@ pD <- ggplot(summary_by_arm, aes(x = arm, y = gs_excess_mean, colour = arm)) +
     aes(label = sprintf("%.2f", gs_excess_mean)),
     nudge_x = 0.10,
     hjust = 0,
-    size = 3.0,
+    size = label_size_strip,
     colour = "grey20"
   ) +
   scale_colour_manual(values = pal_arm, guide = "none") +
@@ -107,7 +132,13 @@ pD <- ggplot(summary_by_arm, aes(x = arm, y = gs_excess_mean, colour = arm)) +
     y = "Estimated − true global strength"
   ) +
   theme_pub(base_size = 9.5) +
-  theme(legend.position = "none", axis.text.x = element_text(size = 8.3))
+  theme(
+    legend.position = "none",
+    plot.title = element_text(size = title_size_strip),
+    axis.title = element_text(size = axis_title_strip),
+    axis.text = element_text(size = axis_text_strip),
+    axis.text.x = element_text(size = axis_text_strip)
+  )
 
 # ------------------------------------------------------------------------
 # Panel E: deviation on truly absent edges
@@ -124,7 +155,7 @@ pE <- ggplot(summary_by_arm, aes(x = arm, y = mtz_mean, colour = arm)) +
     aes(label = sprintf("%.3f", mtz_mean)),
     nudge_x = 0.10,
     hjust = 0,
-    size = 3.0,
+    size = label_size_strip,
     colour = "grey20"
   ) +
   scale_colour_manual(values = pal_arm, guide = "none") +
@@ -140,7 +171,13 @@ pE <- ggplot(summary_by_arm, aes(x = arm, y = mtz_mean, colour = arm)) +
     y = "MAE on absent edges"
   ) +
   theme_pub(base_size = 9.5) +
-  theme(legend.position = "none", axis.text.x = element_text(size = 8.3))
+  theme(
+    legend.position = "none",
+    plot.title = element_text(size = title_size_strip),
+    axis.title = element_text(size = axis_title_strip),
+    axis.text = element_text(size = axis_text_strip),
+    axis.text.x = element_text(size = axis_text_strip)
+  )
 
 fig4_metric_strip <- pD | pE
 
