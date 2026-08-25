@@ -278,7 +278,7 @@ panelB <- summary_tbl |>
   geom_line() + geom_point(size = 1.8) +
   scale_x_log10() +
   scale_colour_manual(values = c("Symptom-only" = col_raw, "Context-adjusted" = col_adj)) +
-  labs(x = x_lab, y = "Estimated global strength", title = "(B) Global strength vs. observation window", colour = NULL, linetype = "sigma_P") +
+  labs(x = x_lab, y = "Estimated global strength", title = "(B) Global strength", colour = NULL, linetype = "sigma_P") +
   theme_pub_local()
 
 panelC <- summary_tbl |>
@@ -289,7 +289,7 @@ panelC <- summary_tbl |>
   geom_line() + geom_point(size = 1.8) +
   scale_x_log10() +
   scale_colour_manual(values = c("Symptom-only" = col_raw, "Context-adjusted" = col_adj)) +
-  labs(x = x_lab, y = "Mean |deviation| on truly absent edges", title = "(C) Edge deviation on absent edges vs. observation window", colour = NULL, linetype = "sigma_P") +
+  labs(x = x_lab, y = "Mean |deviation| on truly absent edges", title = "(C) Absent-edge deviation", colour = NULL, linetype = "sigma_P") +
   theme_pub_local()
 
 library(patchwork)
