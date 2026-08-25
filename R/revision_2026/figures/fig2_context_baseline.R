@@ -107,7 +107,7 @@ pA <- ggplot(prop_tbl, aes(x = M, y = prop, colour = P_group, group = P_group)) 
   scale_x_continuous(breaks = 0:9, expand = expansion(mult = c(0.02, 0.04))) +
   scale_y_continuous(labels = percent_format(accuracy = 1), expand = expansion(mult = c(0.02, 0.11))) +
   labs(title = panel_title("A", "Context level shifts symptom activation"),
-       x = "Number of active symptoms (M)", y = "Probability") +
+       x = "Number of active symptoms", y = "Probability") +
   theme_pub(base_size = 10.5) +
   # Right margin trimmed (theme_pub's default is 14pt) -- combined with
   # panel B's own trimmed left margin below, this closes up the visible
