@@ -2,9 +2,12 @@
 # R/revision_2026/figures/fig4_metric_strip.R
 # ============================================================
 # Compact quantitative strip for Figure 4.
-# Use with the network trio:
-#   A true network | B symptom-only estimate | C context-adjusted estimate
-#   D excess global strength | E error on truly absent edges
+# Use with the network panels (fig4_network_trio.R, expanded 2026-08-27
+# from 3 to 4 networks):
+#   A true network | B baseline (fixed P) estimate | C symptom-only
+#   estimate | D context-adjusted estimate
+#   E estimated global strength (raw, with true value as a reference line)
+#   F number of apparent edges (|omega_hat|>0.10) among truly absent edges
 #
 # Replaces fig4_summary_panels.R as the quantitative half of Figure 4.
 # That earlier version tried to do three jobs in one figure (design
@@ -81,35 +84,60 @@ arm_labels <- c(
 summary_by_arm <- by_arm |>
   group_by(arm) |>
   summarise(
+    gs_mean        = mean(global_strength_est),
+    gs_se          = se(global_strength_est),
+    # gs_excess_mean/se kept (unused by panel E below as of 2026-08-27,
+    # see note) in case anything downstream still wants the differenced
+    # version -- cheap to keep, not worth ripping out.
     gs_excess_mean = mean(global_strength_est - true_gs),
     gs_excess_se   = se(global_strength_est - true_gs),
     mtz_mean       = mean(mae_true_zero),
     mtz_se         = se(mae_true_zero),
+    # 2026-08-27: added for panel F's replacement metric -- count of
+    # apparent edges (|omega_hat| > 0.10) among symptom pairs with NO
+    # direct coupling in the data-generating matrix. Matches the Results
+    # prose's "11.83 vs 8.70 apparent edges" numbers directly, unlike
+    # mae_true_zero (0.106 vs 0.087) which is a less concrete quantity
+    # for a reader to hold onto.
+    phantom_mean   = mean(n_phantom_edges_gt_01),
+    phantom_se     = se(n_phantom_edges_gt_01),
     .groups = "drop"
   )
 
 # ------------------------------------------------------------------------
-# Panel D: excess global strength over true value
+# Panel E: RAW estimated global strength (2026-08-27, replaces the
+# "excess" / estimated-minus-true version). The Results prose reports raw
+# global strength values (e.g. "6.45" for the symptom-only arm), not
+# differences from the true value -- plotting the difference made the
+# reader do an extra subtraction in their head to connect the figure back
+# to the text. Now panel E shows exactly the numbers in the prose, with a
+# dashed reference line at the data-generating value (true_gs=3.05) doing
+# the "how inflated is this" work visually instead of via a differenced
+# y-axis.
 #
 # NOTE: y-axis limits/breaks below (both panels) are FIXED per the
 # design-pass spec rather than computed from summary_by_arm, to remove
 # dead space above/below the points. If a future data refresh shifts
-# gs_excess_mean/mtz_mean meaningfully, check the rendered PNG for
-# clipped points/error bars before trusting these fixed ranges again.
+# gs_mean/mtz_mean meaningfully, check the rendered PNG for clipped
+# points/error bars before trusting these fixed ranges again.
 # ------------------------------------------------------------------------
-pD <- ggplot(summary_by_arm, aes(x = arm, y = gs_excess_mean, colour = arm)) +
-  geom_hline(yintercept = 0, linetype = "dashed", colour = "grey55", linewidth = 0.45) +
-  annotate("text", x = 0.58, y = 0, label = "No inflation", size = 2.9,
+pE <- ggplot(summary_by_arm, aes(x = arm, y = gs_mean, colour = arm)) +
+  geom_hline(yintercept = true_gs, linetype = "dashed", colour = "grey55", linewidth = 0.45) +
+  annotate("text", x = 0.58, y = true_gs, label = "Data-generating value", size = 2.9,
            colour = "grey45", hjust = 0, vjust = -0.6) +
   geom_pointrange(
-    aes(ymin = gs_excess_mean - gs_excess_se,
-        ymax = gs_excess_mean + gs_excess_se),
+    aes(ymin = gs_mean - gs_se,
+        ymax = gs_mean + gs_se),
     linewidth = 0.85,
-    size = 0.75,
+    # size shrunk 0.75 -> 0.4 (2026-08-27): these SEs are small (~0.08-0.10,
+    # 30 replicates) -- at the old point size, the marker itself was wider
+    # than the error bar's vertical extent and fully hid it. Smaller marker
+    # lets the true (short) tail poke out visibly above/below the dot.
+    size = 0.4,
     alpha = 0.9
   ) +
   geom_text(
-    aes(label = sprintf("%.2f", gs_excess_mean)),
+    aes(label = sprintf("%.2f", gs_mean)),
     nudge_x = 0.10,
     hjust = 0,
     size = label_size_strip,
@@ -118,14 +146,14 @@ pD <- ggplot(summary_by_arm, aes(x = arm, y = gs_excess_mean, colour = arm)) +
   scale_colour_manual(values = pal_arm, guide = "none") +
   scale_x_discrete(labels = arm_labels) +
   scale_y_continuous(
-    limits = c(-0.1, 3.75),
-    breaks = 0:3,
+    limits = c(2.7, 7.0),
+    breaks = seq(3, 7, 1),
     expand = expansion(mult = c(0.02, 0.06))
   ) +
   labs(
-    title = panel_title("D", "Excess estimated connectivity"),
+    title = panel_title("E", "Estimated global strength"),
     x = NULL,
-    y = "Estimated − true global strength"
+    y = "Estimated global strength"
   ) +
   theme_pub(base_size = 9.5) +
   theme(
@@ -137,18 +165,37 @@ pD <- ggplot(summary_by_arm, aes(x = arm, y = gs_excess_mean, colour = arm)) +
   )
 
 # ------------------------------------------------------------------------
-# Panel E: deviation on truly absent edges
+# Panel F: apparent edges among absent edges (2026-08-27, replaces the
+# MAE-on-absent-edges version). The count "|omega_hat| > 0.10 among
+# symptom pairs with true omega_ij=0" is a more concrete, directly
+# interpretable quantity than a mean-absolute-error number -- it's
+# literally "how many extra edges did this estimator draw where none
+# exist," matching the Results prose's phrasing exactly.
+#
+# NOTE: y-axis limits/breaks are FIXED per the design-pass spec (see
+# panel E's note above for the same reasoning) -- CHECK THE RENDERED PNG
+# once this reruns, since phantom_mean's actual range wasn't recomputed
+# here (only naive~11.83 and adjusted~8.70 are known from the locked
+# Results text; the baseline arm's value isn't, and the 0-14 range below
+# is a generous guess, not a computed bound).
 # ------------------------------------------------------------------------
-pE <- ggplot(summary_by_arm, aes(x = arm, y = mtz_mean, colour = arm)) +
+pF <- ggplot(summary_by_arm, aes(x = arm, y = phantom_mean, colour = arm)) +
   geom_pointrange(
-    aes(ymin = mtz_mean - mtz_se,
-        ymax = mtz_mean + mtz_se),
+    aes(ymin = phantom_mean - phantom_se,
+        ymax = phantom_mean + phantom_se),
     linewidth = 0.65,
-    size = 0.55,
+    # size shrunk 0.55 -> 0.35 (2026-08-27), same reasoning as panel E --
+    # phantom_se (~0.4, per naive/adjusted SEs quoted in the Results text)
+    # is small relative to the marker at the old size, likely hidden
+    # under it. Also still pending: tightening the y-axis limits/breaks
+    # below once the actual data range is known (see note above) -- a
+    # smaller marker alone won't fix a tail that's invisible because the
+    # AXIS is too wide, only one that's hidden under an oversized point.
+    size = 0.35,
     alpha = 0.85
   ) +
   geom_text(
-    aes(label = sprintf("%.3f", mtz_mean)),
+    aes(label = sprintf("%.2f", phantom_mean)),
     nudge_x = 0.10,
     hjust = 0,
     size = label_size_strip,
@@ -157,14 +204,14 @@ pE <- ggplot(summary_by_arm, aes(x = arm, y = mtz_mean, colour = arm)) +
   scale_colour_manual(values = pal_arm, guide = "none") +
   scale_x_discrete(labels = arm_labels) +
   scale_y_continuous(
-    limits = c(0.083, 0.112),
-    breaks = c(0.09, 0.10, 0.11),
+    limits = c(0, 14),
+    breaks = c(0, 5, 10),
     expand = expansion(mult = c(0.02, 0.06))
   ) +
   labs(
-    title = panel_title("E", "Deviation on absent edges"),
+    title = panel_title("F", "Apparent extra edges"),
     x = NULL,
-    y = "MAE on absent edges"
+    y = "Number of apparent extra edges > 0.10"
   ) +
   theme_pub(base_size = 9.5) +
   theme(
@@ -175,7 +222,7 @@ pE <- ggplot(summary_by_arm, aes(x = arm, y = mtz_mean, colour = arm)) +
     axis.text.x = element_text(size = axis_text_strip)
   )
 
-fig4_metric_strip <- pD | pE
+fig4_metric_strip <- pE | pF
 
 dir.create("figs/revision_2026", recursive = TRUE, showWarnings = FALSE)
 

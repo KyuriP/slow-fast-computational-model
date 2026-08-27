@@ -23,13 +23,17 @@
 # wanted instead, 04b would need to additionally accumulate and average
 # omega_hat matrices across replicates the way 14 did.
 #
-# Uses only the "baseline" and "adjusted"/"naive" arms from sim4_raw.rds,
-# relabeled "Symptom-only" / "Context-adjusted" to match old Figure 8's
-# exact panel titles. The "baseline" (fixed-context, no-confounding) arm
-# is not shown here -- it belongs in Figure 4's quantitative summary
-# panels (by-arm bar/point plot), not this qualitative three-network
-# comparison, matching the old figure's structure (which never had a
-# fixed-context baseline panel either).
+# 2026-08-27: expanded from THREE network panels (true / naive / adjusted)
+# to FOUR (true / baseline / naive / adjusted) -- the Results text already
+# discusses the fixed-context baseline arm's summary metrics, but readers
+# had no way to see what that arm's ESTIMATED network actually looks like,
+# only infer it from the global-strength/deviation numbers. Showing all
+# three estimated networks side by side (fixed P, P omitted, P included)
+# makes the comparison the reader is already being asked to reason about
+# fully visible, rather than leaving the fixed-P condition as text-only.
+# Panel lettering shifted accordingly: A=true, B=baseline (fixed P=0),
+# C=naive (P omitted), D=adjusted (P included). Metric-strip panels in
+# fig4_metric_strip.R relettered E/F to match (were D/E).
 #
 # Outputs
 # -------
@@ -46,6 +50,7 @@ source("R/revision_2026/00_parameters_uncentered01.R")   # symptoms, N
 raw <- readRDS("res/revision_2026/sim4/sim4_raw.rds")
 
 W_true <- raw$true_omega
+W_baseline <- raw$omega_hat$baseline
 W_naive <- raw$omega_hat$naive
 W_adjusted <- raw$omega_hat$adjusted
 
@@ -62,10 +67,14 @@ plot_min <- 0.15
 zero_small <- function(W) { W[abs(W) < plot_min] <- 0; W }
 
 W_true_plot <- W_true
+W_baseline_plot <- zero_small(W_baseline)
 W_naive_plot <- zero_small(W_naive)
 W_adjusted_plot <- zero_small(W_adjusted)
 
-mats <- list(True = W_true_plot, `Symptom-only` = W_naive_plot, `Context-adjusted` = W_adjusted_plot)
+mats <- list(
+  True = W_true_plot, Baseline = W_baseline_plot,
+  `Symptom-only` = W_naive_plot, `Context-adjusted` = W_adjusted_plot
+)
 max_edge <- max(sapply(mats, function(m) max(abs(m))))
 
 # Fixed layout from the true network -- same node positions in all three
@@ -120,6 +129,7 @@ build_edge_colors <- function(W_est, W_true_ref) {
   cmat
 }
 
+edge_col_baseline <- build_edge_colors(W_baseline_plot, W_true_plot)
 edge_col_naive    <- build_edge_colors(W_naive_plot, W_true_plot)
 edge_col_adjusted <- build_edge_colors(W_adjusted_plot, W_true_plot)
 
@@ -145,8 +155,12 @@ plot_one <- function(W, title, edge_color_mat = NULL) {
   args <- list(
     input = W, layout = L, maximum = max_edge, fade = TRUE,
     labels = short_labels,
-    edge.width = 1.3, vsize = 12, label.cex = 1.05,
-    title = title, title.cex = 1.08,
+    # 2026-08-27: title.cex bumped again (1.3 -> 1.7) -- the "(A)"/"(B)"/
+    # "(C)"/"(D)" panel-letter titles were still reading too small even
+    # after the first bump. label.cex (node labels: ANH/DEP/etc.) left at
+    # 1.3, only the panel titles needed a further increase.
+    edge.width = 1.3, vsize = 12, label.cex = 1.3,
+    title = title, title.cex = 1.7,
     theme = "classic", DoNotPlot = FALSE,
     # Margins widened (was c(1,1,2,1)) to compensate for the larger vsize:
     # the fixed spring layout's node positions were computed back when
@@ -177,32 +191,56 @@ abbrev_key <- paste(sprintf("%s = %s", phq_abbrev, names(phq_abbrev)), collapse 
 draw_abbrev_strip <- function() {
   par(mar = c(0, 0, 0, 0))
   plot.new()
-  text(0.5, 0.5, abbrev_key, cex = 0.75, col = "grey30")
+  # 2026-08-27: cex bumped 0.75 -> 1.0, matching the label.cex/title.cex
+  # increase above -- the strip row still has room for it in the 2x2
+  # layout (its own row height, 0.34 relative units, is unchanged).
+  text(0.5, 0.5, abbrev_key, cex = 1.0, col = "grey30")
 }
 
+# 2026-08-27, second revision: switched from a single row of 4 panels to
+# a 2x2 grid + strip row. The 1x4 version (12.3in wide x 3.42in tall,
+# ~3.6:1 aspect ratio) worked but was flatter/wider than ideal -- each
+# panel had noticeably less room than in the original 3-panel version,
+# and the whole figure would print small once scaled to \textwidth.
+# 2x2 gives each panel roughly the same per-panel footprint as the
+# ORIGINAL 3-panel row (no vsize/label.cex/title.cex recalibration
+# needed), while also fixing the aspect-ratio problem outright.
+#
+# Panel arrangement is deliberately NOT simple reading order (A,B / C,D
+# would put True+Baseline on top, Omitted+Included on bottom -- that's
+# what this is) -- specifically chosen so the core "P omitted vs. P
+# included" comparison sits side by side in one row (bottom), since
+# that's the comparison a reader most needs to eyeball directly. True and
+# the fixed-P (no-confounding) reference sit above as the two reference
+# points the bottom row is being compared against.
 draw_trio <- function() {
-  layout(matrix(c(1, 2, 3, 4, 4, 4), nrow = 2, byrow = TRUE), heights = c(3.1, 0.32))
+  layout(matrix(c(1, 2, 3, 4, 5, 5), nrow = 3, byrow = TRUE), heights = c(3.1, 3.1, 0.34))
   plot_one(W_true_plot, "(A) True coupling")
-  plot_one(W_naive_plot, "(B) Estimated network, P omitted", edge_col_naive)
-  plot_one(W_adjusted_plot, "(C) Estimated network, P included", edge_col_adjusted)
+  plot_one(W_baseline_plot, "(B) Estimated network, fixed P", edge_col_baseline)
+  plot_one(W_naive_plot, "(C) Estimated network, P omitted", edge_col_naive)
+  plot_one(W_adjusted_plot, "(D) Estimated network, P included", edge_col_adjusted)
   draw_abbrev_strip()
 }
 
 dir.create("figs/revision_2026", recursive = TRUE, showWarnings = FALSE)
 
-# Canvas height nudged back up just enough for the slim abbreviation row
-# (9.2x3.1 -> 9.2x3.42) -- much less than the earlier full legend row
-# needed (3.65), since this is one line of text, not a legend + key.
-pdf("figs/revision_2026/Figure4_network_trio.pdf", width = 9.2, height = 3.42)
+# Near-square canvas for the 2x2 grid + strip: each of the 2 columns gets
+# ~3.6in width, each of the 2 main rows ~3.4in height -- close to the
+# original 3-panel row's per-panel footprint (was 9.2/3=3.07in wide x
+# 3.1in tall), so the existing vsize=12/label.cex=1.05/title.cex=1.08
+# calibration should still read correctly. CHECK THE RENDERED PDF/PNG
+# regardless before trusting this.
+pdf("figs/revision_2026/Figure4_network_trio.pdf", width = 7.4, height = 7.5)
 draw_trio()
 dev.off()
 
-png("figs/revision_2026/Figure4_network_trio.png", width = 9.2, height = 3.42, units = "in", res = 220)
+png("figs/revision_2026/Figure4_network_trio.png", width = 7.4, height = 7.5, units = "in", res = 220)
 draw_trio()
 dev.off()
 
-cat(sprintf("True global strength: %.2f | Symptom-only: %.2f | Context-adjusted: %.2f\n",
-            sum(abs(W_true[upper.tri(W_true)])), sum(abs(W_naive[upper.tri(W_naive)])),
+cat(sprintf("True global strength: %.2f | Baseline (fixed P): %.2f | Symptom-only: %.2f | Context-adjusted: %.2f\n",
+            sum(abs(W_true[upper.tri(W_true)])), sum(abs(W_baseline[upper.tri(W_baseline)])),
+            sum(abs(W_naive[upper.tri(W_naive)])),
             sum(abs(W_adjusted[upper.tri(W_adjusted)]))))
 
 cat("\nDone. Files:\n")
