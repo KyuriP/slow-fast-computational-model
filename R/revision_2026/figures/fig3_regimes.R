@@ -110,9 +110,18 @@ a_summary <- bind_rows(
   arrange(feedback, time_since_shock) |>
   group_by(feedback) |>
   mutate(mean_m_smooth = roll_mean(mean_m), se_m_smooth = roll_mean(se_M / N)) |>
-  ungroup()
+  ungroup() |>
+  # 2026-08-27: added raw-count versions (mean_M_smooth/se_M_smooth = the
+  # m-scale versions x N) so panels A/B can plot and label "number of
+  # active symptoms" directly, matching the prose and Figure 3
+  # (perturbation recovery)'s units, instead of the 0-1 fraction m. The
+  # m-scale columns are kept too -- downstream collision-detection logic
+  # (a_end/grid_end below) is easier to leave in its proven m-scale form
+  # and only convert at the very end, right before plotting.
+  mutate(mean_M_smooth = mean_m_smooth * N, se_M_smooth = se_m_smooth * N)
 
 m_ref_a <- mean(a_summary$mean_m_smooth[a_summary$feedback == "off" & a_summary$time_since_shock < 0], na.rm = TRUE)
+M_ref_a <- m_ref_a * N
 
 set.seed(3)
 n_sample_chains <- 30L
@@ -133,7 +142,8 @@ a_chains <- bind_rows(
   group_by(feedback, chain) |>
   mutate(m = roll_mean(m)) |>
   ungroup() |>
-  filter(!is.na(m))
+  filter(!is.na(m)) |>
+  mutate(M = m * N)  # count-scale version for plotting, see a_summary note above
 # ^ raw m is a per-sweep discrete symptom COUNT (0-9 active symptoms,
 # resampled every step), not a smooth continuous process like raw P --
 # at the single-sweep level it is high-frequency noise, so 30 overlaid
@@ -144,18 +154,20 @@ a_chains <- bind_rows(
 # curve repeated), just without the per-sweep sampling noise dominating
 # the visual.
 
-a_end <- a_summary |> filter(!is.na(mean_m_smooth)) |> group_by(feedback) |>
+a_end <- a_summary |> filter(!is.na(mean_M_smooth)) |> group_by(feedback) |>
   filter(time_since_shock == max(time_since_shock)) |> ungroup() |>
-  arrange(mean_m_smooth)
+  arrange(mean_M_smooth)
 
 # The off/on end labels collide when the two curves end up close together
-# (here: off ~0.29, on ~0.32) -- nudge the label Y positions apart a
-# little without moving the actual lines, same fix-class as Figure 2's
-# peak-label collision earlier.
-if (nrow(a_end) == 2 && diff(range(a_end$mean_m_smooth)) < 0.05) {
-  a_end$label_y <- a_end$mean_m_smooth + c(-0.028, 0.028)
+# (here: off ~2.6, on ~2.9 active symptoms) -- nudge the label Y positions
+# apart a little without moving the actual lines, same fix-class as
+# Figure 2's peak-label collision earlier. Thresholds below are the
+# original m-scale values (0.05, 0.028) x N=9, since a_end is now on the
+# count scale.
+if (nrow(a_end) == 2 && diff(range(a_end$mean_M_smooth)) < 0.05 * N) {
+  a_end$label_y <- a_end$mean_M_smooth + c(-0.028, 0.028) * N
 } else {
-  a_end$label_y <- a_end$mean_m_smooth
+  a_end$label_y <- a_end$mean_M_smooth
 }
 
 feedback_labels <- c(off = "Feedback off", on = "Feedback on")
@@ -169,16 +181,16 @@ x_max_a <- plot_window_a[2]
 # it keeps its own native window (0-750) rather than matching panel B.
 x_axis_max_a <- x_max_a
 
-pA <- ggplot(a_summary, aes(x = time_since_shock, y = mean_m_smooth, colour = feedback, linetype = feedback)) +
-  geom_hline(yintercept = m_ref_a, colour = "grey78", linewidth = 0.4) +
+pA <- ggplot(a_summary, aes(x = time_since_shock, y = mean_M_smooth, colour = feedback, linetype = feedback)) +
+  geom_hline(yintercept = M_ref_a, colour = "grey78", linewidth = 0.4) +
   geom_vline(xintercept = 0, linetype = "dashed", colour = "grey60", linewidth = 0.4) +
   geom_line(
     data = a_chains,
-    aes(x = time_since_shock, y = m, group = interaction(chain, feedback), colour = feedback),
+    aes(x = time_since_shock, y = M, group = interaction(chain, feedback), colour = feedback),
     inherit.aes = FALSE, alpha = spaghetti_alpha, linewidth = spaghetti_width
   ) +
   geom_ribbon(
-    aes(ymin = mean_m_smooth - interval_mult * se_m_smooth, ymax = mean_m_smooth + interval_mult * se_m_smooth, fill = feedback),
+    aes(ymin = mean_M_smooth - interval_mult * se_M_smooth, ymax = mean_M_smooth + interval_mult * se_M_smooth, fill = feedback),
     alpha = ribbon_alpha, colour = NA, show.legend = FALSE
   ) +
   geom_line(linewidth = main_line_width) +
@@ -193,7 +205,7 @@ pA <- ggplot(a_summary, aes(x = time_since_shock, y = mean_m_smooth, colour = fe
   scale_x_continuous(expand = expansion(mult = c(0.01, 0.16))) +
   labs(
     title = panel_title("A", "Moderate feedback slows recovery"),
-    x = "Steps since shock", y = "Mean symptom activation (m)", colour = NULL, linetype = NULL
+    x = "Steps since perturbation", y = "Mean number of active symptoms", colour = NULL, linetype = NULL
   ) +
   theme_pub(base_size = base_sz) +
   theme(
@@ -242,7 +254,8 @@ grid_w <- sim3c |> filter(b %in% display_b_grid, time_since_shock >= plot_window
   arrange(b, time_since_shock) |>
   group_by(b) |>
   mutate(mean_m_smooth = roll_mean(mean_m), se_m_smooth = roll_mean(se_M / N)) |>
-  ungroup()
+  ungroup() |>
+  mutate(mean_M_smooth = mean_m_smooth * N, se_M_smooth = se_m_smooth * N)  # see a_summary note above
 
 b_levels <- sort(unique(grid_w$b))
 grid_pal <- setNames(colorRampPalette(c(col_off, col_on, col_high))(length(b_levels)), b_levels)
@@ -271,7 +284,8 @@ grid_chains <- sim3c_raw |>
   group_by(b, chain) |>
   mutate(m = roll_mean(m)) |>
   ungroup() |>
-  filter(!is.na(m))
+  filter(!is.na(m)) |>
+  mutate(M = m * N)  # count-scale version for plotting, see a_summary note above
 
 # grid_w no longer contains b=0 (dropped from the display set, see above),
 # so the old "pre-shock baseline from the b=0 rows" trick would silently
@@ -279,34 +293,37 @@ grid_chains <- sim3c_raw |>
 # baseline concept (feedback doesn't change pre-shock dynamics, so it
 # doesn't matter which b the reference line is computed from).
 m_ref_grid <- m_ref_a
+M_ref_grid <- M_ref_a
 x_max_grid <- plot_window_grid[2]
 
-grid_end <- grid_w |> filter(!is.na(mean_m_smooth)) |> group_by(b) |>
+grid_end <- grid_w |> filter(!is.na(mean_M_smooth)) |> group_by(b) |>
   filter(time_since_shock == max(time_since_shock)) |> ungroup() |>
-  arrange(mean_m_smooth)
+  arrange(mean_M_smooth)
 # Spread out end-labels that would otherwise collide (several b's plateau
 # close together) -- same fix-class as panel A's off/on label collision.
-label_gap <- 0.045
+# label_gap is the original m-scale value (0.045) x N=9, now that
+# grid_end is on the count scale.
+label_gap <- 0.045 * N
 if (nrow(grid_end) > 1) {
-  y <- grid_end$mean_m_smooth
+  y <- grid_end$mean_M_smooth
   for (i in 2:length(y)) {
     if (y[i] - y[i - 1] < label_gap) y[i] <- y[i - 1] + label_gap
   }
   grid_end$label_y <- y
 } else {
-  grid_end$label_y <- grid_end$mean_m_smooth
+  grid_end$label_y <- grid_end$mean_M_smooth
 }
 
-pGrid <- ggplot(grid_w, aes(x = time_since_shock, y = mean_m_smooth, colour = factor(b), group = factor(b))) +
-  geom_hline(yintercept = m_ref_grid, colour = "grey78", linewidth = 0.4) +
+pGrid <- ggplot(grid_w, aes(x = time_since_shock, y = mean_M_smooth, colour = factor(b), group = factor(b))) +
+  geom_hline(yintercept = M_ref_grid, colour = "grey78", linewidth = 0.4) +
   geom_vline(xintercept = 0, linetype = "dashed", colour = "grey60", linewidth = 0.4) +
   geom_line(
     data = grid_chains,
-    aes(x = time_since_shock, y = m, group = interaction(chain, b), colour = factor(b)),
+    aes(x = time_since_shock, y = M, group = interaction(chain, b), colour = factor(b)),
     inherit.aes = FALSE, alpha = spaghetti_alpha, linewidth = spaghetti_width
   ) +
   geom_ribbon(
-    aes(ymin = mean_m_smooth - interval_mult * se_m_smooth, ymax = mean_m_smooth + interval_mult * se_m_smooth, fill = factor(b)),
+    aes(ymin = mean_M_smooth - interval_mult * se_M_smooth, ymax = mean_M_smooth + interval_mult * se_M_smooth, fill = factor(b)),
     alpha = ribbon_alpha, colour = NA, show.legend = FALSE
   ) +
   geom_line(linewidth = main_line_width) +
@@ -320,7 +337,7 @@ pGrid <- ggplot(grid_w, aes(x = time_since_shock, y = mean_m_smooth, colour = fa
   scale_x_continuous(expand = expansion(mult = c(0.01, 0.11))) +
   labs(
     title = panel_title("B", "Recovery changes across feedback strengths"),
-    x = "Steps since shock", y = "Mean symptom activation (m)"
+    x = "Steps since perturbation", y = "Mean number of active symptoms"
   ) +
   theme_pub(base_size = base_sz) +
   theme(
@@ -361,10 +378,24 @@ pC <- ggplot(sep, aes(x = b, y = separation_m)) +
   # preferred after all.
   annotate("point", x = locked_b_row$b, y = locked_b_row$separation_m, shape = 21, size = 5.5, colour = col_on, stroke = 1.0) +
   annotate("text", x = locked_b_row$b, y = locked_b_row$separation_m + 0.06, label = "main simulation\nvalue", size = 2.7, colour = col_on, hjust = 0.5, vjust = 0, lineheight = 0.85) +
-  scale_colour_manual(values = regime_pal, name = NULL) +
+  # 2026-08-27: relabeled at the DISPLAY level only -- regime_flag's
+  # underlying values ("convergent"/"history-dependent", from
+  # 05_supp_regime_history_dependence.R) are unchanged, so this doesn't
+  # require rerunning that script. "Reconvergent"/"initial-state-
+  # dependent" reads clearer for a psych audience than "convergent"/
+  # "history-dependent", and matches the manuscript prose now avoiding
+  # "history-dependence" language.
+  scale_colour_manual(
+    values = regime_pal, name = NULL,
+    labels = c(
+      convergent = "reconvergent",
+      `history-dependent` = "initial-state-dependent",
+      `runaway/saturation` = "runaway/saturation"
+    )
+  ) +
   labs(
-    title = panel_title("C", "History-dependence emerges at higher feedback"),
-    x = "Feedback strength (b)", y = expression(Delta ~ "mean symptom activation (late)")
+    title = panel_title("C", "Initial-state dependence emerges at higher feedback"),
+    x = "Feedback strength (b)", y = "Difference in late mean symptom activation"
   ) +
   theme_pub(base_size = base_sz) +
   theme(legend.position = "bottom")
