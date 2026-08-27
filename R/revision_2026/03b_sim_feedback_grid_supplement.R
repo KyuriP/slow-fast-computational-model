@@ -3,8 +3,9 @@
 # ============================================================
 # Supplement to Simulation 3: the b calibration grid used to pick the main-
 # text feedback value. Same design as 03_sim_feedback.R (same shock/recovery
-# setup as Simulation 2, feedback term b*max(m_smooth - m_star, 0)*dt), but
-# sweeps b across off/mild/medium/strong instead of just off vs on.
+# setup as Simulation 2, signed feedback term b*(m_smooth - m_star)*dt --
+# see 03_sim_feedback.R's 2026-08-27 note), but sweeps b across
+# off/mild/medium/strong instead of just off vs on.
 #
 # This is NOT the main-text simulation. b=0.5 ("medium") was selected from
 # this grid as the main-text value because it produced a visible feedback
@@ -83,7 +84,7 @@ run_chain <- function(b) {
     m_smooth <- m_smooth + alpha_smooth * (m_t - m_smooth)
 
     P <- P + kappa * (P_base - P) * dt + sigma_P * sqrt(dt) * rnorm(1) +
-      b * max(m_smooth - m_star, 0) * dt
+      b * (m_smooth - m_star) * dt
   }
   list(P = P_trace, M = M_trace, m_smooth = ms_trace)
 }

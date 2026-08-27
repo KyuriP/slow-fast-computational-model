@@ -106,8 +106,13 @@ pA <- ggplot(prop_tbl, aes(x = M, y = prop, colour = P_group, group = P_group)) 
   scale_colour_manual(values = pal_context_display, guide = "none") +
   scale_x_continuous(breaks = 0:9, expand = expansion(mult = c(0.02, 0.04))) +
   scale_y_continuous(labels = percent_format(accuracy = 1), expand = expansion(mult = c(0.02, 0.11))) +
+  # y-axis relabeled "Probability" -> "Proportion" (2026-08-27): these bar
+  # heights are the observed proportion of post-burn-in simulated states at
+  # each symptom count, not an analytically derived probability -- matches
+  # the "proportion" phrasing now used in the prose and in panel B's column
+  # header.
   labs(title = panel_title("A", "Context level shifts symptom activation"),
-       x = "Number of active symptoms", y = "Probability") +
+       x = "Number of active symptoms", y = "Proportion") +
   theme_pub(base_size = 10.5) +
   # Right margin trimmed (theme_pub's default is 14pt) -- combined with
   # panel B's own trimmed left margin below, this closes up the visible
@@ -153,7 +158,10 @@ summ_corrected <- chain_summary |>
       levels = rev(unname(condition_labels[c("low", "middle", "high")]))
     ),
     mean_label = sprintf("%.2f", mean_M),
-    high_label = sprintf("5+ active: %.0f%%", 100 * pr_high)
+    # "≥5" (>=5) rather than "5+", to match the proportion-language
+    # phrasing used in the prose/column header below rather than
+    # probability notation (Pr(...)) -- see 2026-08-27 relabeling note.
+    high_label = sprintf("≥5 active: %.0f%%", 100 * pr_high)
   )
 
 # CORRECTED after checking the rendered PNG (2026-08-25): the fixed
@@ -182,8 +190,19 @@ sep_x   <- max(summ_corrected$mean_M) + 0.62   # light divider between the
 # 0:4 are drawn, so the space past 4 was unlabeled and read as "why does
 # the axis just stop at 4." Rather than change the scale mechanics again,
 # the fix here is to stop leaving that region unexplained: a light
-# separator plus explicit "Pr(5+ active)" column header now marks it as a
-# deliberate second field, not a truncated axis.
+# separator plus explicit "Proportion ≥5 active" column header now marks
+# it as a deliberate second field, not a truncated axis.
+#
+# 2026-08-27: header text changed from "Pr(5+ active)" to "Proportion
+# ≥5 active" -- since this quantity is reported as a simulated
+# proportion of post-burn-in states, not an analytically derived
+# probability, "proportion" is the more transparent/accurate term (matches
+# the corresponding prose wording). Header string is ~7 characters longer
+# than before; the per-row labels below ("≥5 active: 100%", 16
+# chars, size 3.5) already fit in the same x_axis_max headroom at a larger
+# font size than this header (size 3.0), so it should still clear the
+# panel edge, but check the rendered PNG after rerunning to confirm it
+# isn't clipped.
 n_grp <- nlevels(summ_corrected$P_group)
 
 pB <- ggplot(summ_corrected, aes(y = P_group, x = mean_M, colour = P_group)) +
@@ -227,7 +246,7 @@ pB <- ggplot(summ_corrected, aes(y = P_group, x = mean_M, colour = P_group)) +
            label = "Mean (95% CI)", hjust = 0, size = 3.0, colour = "grey35",
            fontface = "italic") +
   annotate("text", x = label_x, y = n_grp + 0.62,
-           label = "Pr(5+ active)", hjust = 0, size = 3.0, colour = "grey35",
+           label = "Proportion ≥5 active", hjust = 0, size = 3.0, colour = "grey35",
            fontface = "italic") +
   scale_colour_manual(values = pal_context_display, guide = "none") +
   scale_x_continuous(

@@ -17,14 +17,16 @@
 #
 # Model:
 #   P_{t+dt} = P_t + kappa*(P_base - P_t)*dt + sigma_P*sqrt(dt)*eps_t
-#              + b*max(m_smooth_t - m_star, 0)*dt
+#              + b*(m_smooth_t - m_star)*dt
 #   (shock applied as a one-off jump to P at shock_time, same as Sim 2)
 #
-# The feedback term uses the positive part [m_smooth_t - m_star]_+, not the
-# signed difference: only *elevated* symptom burden pushes the slow field up
-# (sustained high symptoms worsen context). Burden below m_star does not
-# actively pull P down -- recovery below baseline still happens only through
-# the kappa mean-reversion term, not through a symmetric feedback push.
+# 2026-08-27: switched from the positive-part clamp [m_smooth_t - m_star]_+
+# to the signed difference (m_smooth_t - m_star). Feedback is now symmetric:
+# elevated burden (m_smooth > m_star) pushes the slow field up, and burden
+# below m_star actively pulls P down (in addition to the kappa mean-
+# reversion term already doing so). All main-text equations/captions/tables
+# should describe this as the signed feedback term b*(m_bar_t - m_star), not
+# the clamped [.]_+ form used in the earlier design.
 #
 # Fast layer unchanged:
 #   logit Pr(S_i=1 | S_-i, P_t) = tau_i + sum_j!=i omega_ij S_j + gamma_i P_t
@@ -132,10 +134,11 @@ run_chain <- function(b) {
     m_smooth <- m_smooth + alpha_smooth * (m_t - m_smooth)
 
     # Slow recovery/diffusion + feedback for the next step.
-    # Positive-part feedback: only elevated burden (m_smooth > m_star)
-    # pushes P up; below-baseline burden contributes nothing here.
+    # Signed feedback (2026-08-27, replaces the earlier positive-part
+    # clamp): elevated burden (m_smooth > m_star) pushes P up, and burden
+    # below m_star pulls P down.
     P <- P + kappa * (P_base - P) * dt + sigma_P * sqrt(dt) * rnorm(1) +
-      b * max(m_smooth - m_star, 0) * dt
+      b * (m_smooth - m_star) * dt
   }
   list(P = P_trace, M = M_trace, m_smooth = ms_trace)
 }

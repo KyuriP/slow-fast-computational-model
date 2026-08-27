@@ -115,8 +115,9 @@ simulate_history_chain <- function(
     # Smooth symptom burden for feedback.
     m_smooth <- (1 - alpha_smooth) * m_smooth + alpha_smooth * m
 
-    # Slow-field update.
-    feedback_term <- b * max(m_smooth - m_star, 0) * dt
+    # Slow-field update. Signed feedback (2026-08-27, replaces the earlier
+    # positive-part clamp) -- see 03_sim_feedback.R for the rationale.
+    feedback_term <- b * (m_smooth - m_star) * dt
     P <- P +
       kappa * (P_base - P) * dt +
       sigma_P * sqrt(dt) * rnorm(1) +
