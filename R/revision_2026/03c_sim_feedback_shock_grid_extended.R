@@ -109,7 +109,7 @@ run_chain <- function(b) {
     m_smooth <- m_smooth + alpha_smooth * (m_t - m_smooth)
 
     P <- P + kappa * (P_base - P) * dt + sigma_P * sqrt(dt) * rnorm(1) +
-      b * max(m_smooth - m_star, 0) * dt
+      b * (m_smooth - m_star) * dt
   }
   list(P = P_trace, M = M_trace)
 }
