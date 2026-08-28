@@ -25,53 +25,57 @@
 #   - that separation appears cleanly across a b-grid, not just at one
 #     cherry-picked value
 #
-# Three panels (a first attempt at panel B -- raw low-/high-initial-state
-# trajectories at b=1.0, no shock -- was tried and dropped; see note
-# below; this is the SECOND version of panel B, built differently):
-#   (A) Moderate feedback (b=0.50): shock response and recovery
-#       -- reuses Sim 2 (feedback off) vs. Sim 3 (feedback on) symptom
-#       burden, same data/smoothing as the old Figure 3 panel D.
-#   (B) The SAME shock-and-recovery design as panel A, swept across the
-#       full feedback-strength grid (b = 0, 0.5, 0.75, 1.0, 1.25, 1.5;
-#       03c_sim_feedback_shock_grid_extended.R) instead of just off/on --
-#       one line per b, all sharing panel A's shock marker and visual
-#       language, showing the same experiment shift from "recovers" to
-#       "settles at an elevated plateau" as b increases.
-#   (C) History-dependence index across feedback strength (the full
-#       b-grid from the regime-check script), convergent vs.
-#       history-dependent, with the locked main-text b explicitly marked.
+# 2026-08-28: MERGED FROM THREE PANELS TO TWO. The original design had a
+# separate panel A (feedback off vs. the locked b=0.50 case only) and
+# panel B (the same shock-and-recovery design swept across a wider
+# b-grid, deliberately excluding b=0/0.50 to avoid duplicating panel A).
+# Once panel A's window was extended to match panel B's (see git history
+# for that intermediate version), the two panels were plotting the
+# identical experiment on the identical timescale with heavy overlap in
+# purpose -- per review, panel A wasn't earning its own space anymore.
+# Folded panel A's two lines (b=0 "feedback off", b=0.50 "the locked
+# main-text value") directly INTO the grid panel below, so there is now
+# one shock-and-recovery panel covering the full range from "no feedback"
+# to "runaway/plateau," plus the regime-index panel. b=0 and b=0.50 keep
+# panel A's individual-chain spaghetti layer (the two "headline" lines);
+# the other grid points show mean + ribbon only, to avoid the
+# already-flagged problem of individual-chain spaghetti becoming
+# illegible past ~4 simultaneous lines.
 #
-# FIRST VERSION OF PANEL B, DROPPED: raw low-/high-initial-state
-# trajectories at b=1.0, from the regime-check script's NO-SHOCK design
-# (chains started directly at a low- vs. high-burden state, not
+# Two panels:
+#   (A) Shock-and-recovery trajectories across the feedback-strength grid
+#       (b = 0, 0.5, 0.75, 0.9, 1.0, 1.3; from
+#       03c_sim_feedback_shock_grid_extended.R), one line per b, showing
+#       the shift from "recovers" (b=0, b=0.50) to "settles at an
+#       elevated plateau" as b increases.
+#   (B) History-dependence index across feedback strength (the full
+#       b-grid from the regime-check script), reconvergent vs.
+#       initial-state-dependent, with the locked main-text b explicitly
+#       marked.
+#
+# FIRST VERSION OF PANEL B (pre-merge), DROPPED: raw low-/high-initial-
+# state trajectories at b=1.0, from the regime-check script's NO-SHOCK
+# design (chains started directly at a low- vs. high-burden state, not
 # perturbed mid-run). That tests initial-condition dependence, a real
-# question, but a genuinely different one from panel A's "does a shock
-# recover" -- it never shared panel A's shock-at-t=0 structure, which
-# made it read as unclear/unmotivated next to panel A. It also had a
-# second, independent problem: individual per-chain noise was comparable
-# in size to the actual between-group separation, so the raw-trajectory
-# view read as two overlapping noisy clouds rather than two separated
-# regimes, even though the underlying means were cleanly separated.
-# Replaced with the current panel B, which reuses panel A's exact
-# experimental design (shock, not initial-condition) at multiple b, so
-# it is now a direct visual extension of panel A rather than a
-# differently-designed companion.
+# question, but a genuinely different one from the shock-recovery panel's
+# "does a shock recover" -- it never shared that panel's shock-at-t=0
+# structure, which made it read as unclear/unmotivated alongside it. It
+# also had a second, independent problem: individual per-chain noise was
+# comparable in size to the actual between-group separation, so the
+# raw-trajectory view read as two overlapping noisy clouds rather than
+# two separated regimes, even though the underlying means were cleanly
+# separated.
 #
-# All three panels plot symptom burden (m) / a burden-derived index,
-# sharing one visual language rather than mixing P_t and m_t panels as
-# the old 2x2 layout did.
+# Both panels plot symptom burden (m) / a burden-derived index, sharing
+# one visual language.
 #
-# Legend: colour (+ linetype in A) identify the compared conditions in
-# each panel. Per review, the spaghetti (individual-chain) layer in
-# panel A is included in the legend-generating aesthetic mapping (not
+# Legend: colour (+ linetype for the off/on pair) identify the compared
+# conditions. Per review, the spaghetti (individual-chain) layer for
+# b=0/0.50 is included in the legend-generating aesthetic mapping (not
 # show.legend=FALSE), so the legend key shows both the thin/faint
 # individual-trajectory style and the bold mean-line style together --
 # making explicit, via the legend itself, that the figure is built from
-# many raw trajectories, not just a single computed curve. Panel B now
-# also carries this treatment (added once the panel was trimmed to 4
-# lines instead of 6 -- with 6 conditions individual-chain spaghetti
-# stopped being legible, the lesson from the first panel-B attempt; 4 is
-# fine).
+# many raw trajectories, not just a single computed curve.
 #
 # Outputs
 # -------
@@ -83,162 +87,61 @@ suppressPackageStartupMessages({
   library(patchwork)
 })
 
+# RColorBrewer used (namespaced, not attached) for panel A's Set3 palette --
+# install.packages("RColorBrewer") if not already installed.
 source("R/revision_2026/figures/theme_publication.R")  # theme_pub(), panel_title(), col_*, pal_feedback
 
 roll_mean <- function(x, k = 15) as.numeric(stats::filter(x, rep(1 / k, k), sides = 2))
 base_sz <- base_size_panel_title  # 10.5, from theme_publication.R's global tokens
 interval_mult <- 1.96
 
-# ------------------------------------------------------------------------
-# Panel A data: moderate feedback (b=0.50), symptom burden, off vs on
-# ------------------------------------------------------------------------
-sim2 <- read_csv("res/revision_2026/sim2/sim2_summary.csv", show_col_types = FALSE)
-sim3 <- read_csv("res/revision_2026/sim3/sim3_summary.csv", show_col_types = FALSE)
+# 2026-08-27: local (THIS FIGURE ONLY) darker gray, used in place of the
+# shared theme_publication.R col_off ("#7F7F7F") wherever this script
+# encodes "feedback off"/"reconvergent" -- the shared mid-gray read as too
+# washed-out against white, especially under the ribbon/spaghetti alpha
+# layers. Not changed in theme_publication.R itself, since col_off is
+# reused elsewhere (e.g. Figure 4's "Fixed P" arm) where this hasn't been
+# flagged as an issue -- no reason to risk changing figures that work.
+gray_off_dark <- "#4D4D4D"
 
-plot_window_a <- c(-100, 750)
-N <- 9
-
-sim2_w <- sim2 |> filter(time_since_shock >= plot_window_a[1], time_since_shock <= plot_window_a[2]) |>
-  mutate(feedback = "off")
-sim3_on_w <- sim3 |> filter(feedback == "on", time_since_shock >= plot_window_a[1], time_since_shock <= plot_window_a[2])
-
-a_summary <- bind_rows(
-  sim2_w |> select(time_since_shock, feedback, mean_m, se_M),
-  sim3_on_w |> select(time_since_shock, feedback, mean_m, se_M)
-) |>
-  mutate(feedback = factor(feedback, levels = c("off", "on"))) |>
-  arrange(feedback, time_since_shock) |>
-  group_by(feedback) |>
-  mutate(mean_m_smooth = roll_mean(mean_m), se_m_smooth = roll_mean(se_M / N)) |>
-  ungroup() |>
-  # 2026-08-27: added raw-count versions (mean_M_smooth/se_M_smooth = the
-  # m-scale versions x N) so panels A/B can plot and label "number of
-  # active symptoms" directly, matching the prose and Figure 3
-  # (perturbation recovery)'s units, instead of the 0-1 fraction m. The
-  # m-scale columns are kept too -- downstream collision-detection logic
-  # (a_end/grid_end below) is easier to leave in its proven m-scale form
-  # and only convert at the very end, right before plotting.
-  mutate(mean_M_smooth = mean_m_smooth * N, se_M_smooth = se_m_smooth * N)
-
-m_ref_a <- mean(a_summary$mean_m_smooth[a_summary$feedback == "off" & a_summary$time_since_shock < 0], na.rm = TRUE)
-M_ref_a <- m_ref_a * N
-
-set.seed(3)
-n_sample_chains <- 30L
-sim2_raw <- readRDS("res/revision_2026/sim2/sim2_raw.rds")$traj |>
-  filter(time_since_shock >= plot_window_a[1], time_since_shock <= plot_window_a[2]) |>
-  mutate(feedback = "off")
-sim3_raw <- readRDS("res/revision_2026/sim3/sim3_raw.rds")$traj |>
-  filter(feedback == "on", time_since_shock >= plot_window_a[1], time_since_shock <= plot_window_a[2])
-
-a_chains <- bind_rows(
-  sim2_raw |> filter(chain %in% sample(unique(sim2_raw$chain), n_sample_chains)) |>
-    select(time_since_shock, chain, feedback, m),
-  sim3_raw |> filter(chain %in% sample(unique(sim3_raw$chain), n_sample_chains)) |>
-    select(time_since_shock, chain, feedback, m)
-) |>
-  mutate(feedback = factor(feedback, levels = c("off", "on"))) |>
-  arrange(feedback, chain, time_since_shock) |>
-  group_by(feedback, chain) |>
-  mutate(m = roll_mean(m)) |>
-  ungroup() |>
-  filter(!is.na(m)) |>
-  mutate(M = m * N)  # count-scale version for plotting, see a_summary note above
-# ^ raw m is a per-sweep discrete symptom COUNT (0-9 active symptoms,
-# resampled every step), not a smooth continuous process like raw P --
-# at the single-sweep level it is high-frequency noise, so 30 overlaid
-# raw chains rendered a dense vertical hash instead of legible
-# trajectories. Applying the same rolling-window smoothing used for the
-# aggregate mean to each INDIVIDUAL chain first fixes this: each line
-# still shows genuine chain-to-chain variability (it is not the same
-# curve repeated), just without the per-sweep sampling noise dominating
-# the visual.
-
-a_end <- a_summary |> filter(!is.na(mean_M_smooth)) |> group_by(feedback) |>
-  filter(time_since_shock == max(time_since_shock)) |> ungroup() |>
-  arrange(mean_M_smooth)
-
-# The off/on end labels collide when the two curves end up close together
-# (here: off ~2.6, on ~2.9 active symptoms) -- nudge the label Y positions
-# apart a little without moving the actual lines, same fix-class as
-# Figure 2's peak-label collision earlier. Thresholds below are the
-# original m-scale values (0.05, 0.028) x N=9, since a_end is now on the
-# count scale.
-if (nrow(a_end) == 2 && diff(range(a_end$mean_M_smooth)) < 0.05 * N) {
-  a_end$label_y <- a_end$mean_M_smooth + c(-0.028, 0.028) * N
-} else {
-  a_end$label_y <- a_end$mean_M_smooth
-}
-
-feedback_labels <- c(off = "Feedback off", on = "Feedback on")
-x_max_a <- plot_window_a[2]
-
-# REVERTED (2026-08-25): x-axis-matching to panel B's 0-1500 window was
-# tried, but with panel B now genuinely covering the b=0/0.50 contrast
-# itself, panel A's line visibly stopping around step 750 while the axis
-# ran to 1500 read as broken/incomplete rather than "intentionally
-# focused." Panel A is the zoomed, precise main-simulation comparison --
-# it keeps its own native window (0-750) rather than matching panel B.
-x_axis_max_a <- x_max_a
-
-pA <- ggplot(a_summary, aes(x = time_since_shock, y = mean_M_smooth, colour = feedback, linetype = feedback)) +
-  geom_hline(yintercept = M_ref_a, colour = "grey78", linewidth = 0.4) +
-  geom_vline(xintercept = 0, linetype = "dashed", colour = "grey60", linewidth = 0.4) +
-  geom_line(
-    data = a_chains,
-    aes(x = time_since_shock, y = M, group = interaction(chain, feedback), colour = feedback),
-    inherit.aes = FALSE, alpha = spaghetti_alpha, linewidth = spaghetti_width
-  ) +
-  geom_ribbon(
-    aes(ymin = mean_M_smooth - interval_mult * se_M_smooth, ymax = mean_M_smooth + interval_mult * se_M_smooth, fill = feedback),
-    alpha = ribbon_alpha, colour = NA, show.legend = FALSE
-  ) +
-  geom_line(linewidth = main_line_width) +
-  geom_text(
-    data = a_end, aes(x = x_max_a + 25, y = label_y, label = feedback_labels[as.character(feedback)]),
-    hjust = 0, size = 3.0, fontface = "plain", show.legend = FALSE
-  ) +
-  coord_cartesian(xlim = c(plot_window_a[1], x_axis_max_a), clip = "off") +
-  scale_colour_manual(values = pal_feedback, labels = feedback_labels) +
-  scale_fill_manual(values = pal_feedback, guide = "none") +
-  scale_linetype_manual(values = c(off = "dashed", on = "solid"), labels = feedback_labels) +
-  scale_x_continuous(expand = expansion(mult = c(0.01, 0.16))) +
-  labs(
-    title = panel_title("A", "Moderate feedback slows recovery"),
-    x = "Steps since perturbation", y = "Mean number of active symptoms", colour = NULL, linetype = NULL
-  ) +
-  theme_pub(base_size = base_sz) +
-  theme(
-    plot.margin = margin(5.5, 60, 5.5, 5.5),
-    legend.position = "bottom",
-    legend.key.width = unit(1.1, "cm"),
-    legend.text = element_text(size = base_sz - 2),
-    legend.margin = margin(t = -4)
-  )
+# 2026-08-27: text sizes bumped throughout this figure specifically (axis
+# text/titles, panel titles, legend text) -- theme_pub()'s shared sizes
+# (axis text 9pt, axis title 10pt, panel title 10.5pt) are FIXED
+# regardless of the base_size argument (see theme_publication.R's own
+# note), so bumping them requires local theme() overrides per panel,
+# applied below in pGrid/pB. Only this figure is affected.
+# bumped 2026-08-28 (axis_text 11->13, axis_title 12->14, legend_text
+# 10.5->12.5, panel_title 13->15) per feedback that text was too small,
+# then axis text/title dialed back slightly (13->12, 14->13) per
+# follow-up feedback that it had overshot.
+axis_text_sz  <- 12
+axis_title_sz <- 13
+panel_title_sz <- 15
+legend_text_sz <- 12.5
 
 # ------------------------------------------------------------------------
-# Panel B: shock-and-recovery trajectories across the feedback-strength
-# grid (03c_sim_feedback_shock_grid_extended.R) -- same shock design and
-# visual language as panel A, just with one line per b instead of two
-# (off/on), so the reader can see the SAME experiment shift from
-# "recovers" to "settles at an elevated plateau" as b increases.
+# Panel A: shock-and-recovery trajectories across the feedback-strength
+# grid (03c_sim_feedback_shock_grid_extended.R), b = 0, 0.5, 0.75, 0.9,
+# 1.0, 1.3 -- one line per b, so the reader sees the shift from "recovers"
+# (b=0, b=0.50) to "settles at an elevated plateau" as b increases, all
+# in one panel.
 #
-# DISPLAY SET revised 2026-08-25: b=0/0.50 dropped -- panel A now covers
-# that exact contrast directly, so repeating it here was redundant.
-# Instead shows b = 0.75, 0.90, 1.00, 1.10, 1.30: points strictly between
-# the established "recovers" and "clear elevated plateau" regimes, plus
-# one point further into the history-dependent side. b=1.25/1.50 stay out
-# of the DISPLAY set -- b=1.50 in particular is still the least-resolved
-# point in the grid. 03c's window was extended (1500 -> 2500 steps) and
-# a b=1.30 point was added specifically so this set could include
-# something past b=1.00 that is ACTUALLY plateaued, not just labeled as
-# if it were -- check the rendered PNG (does the b=1.30 line visibly
-# flatten before the window ends?) before trusting that it belongs here.
-# If b=1.30 is still rising at step 2500, drop it back out, same as
-# b=1.25/1.50 were dropped from the original 1500-step version.
-# ------------------------------------------------------------------------
-sim3c <- read_csv("res/revision_2026/sim3c/sim3c_summary.csv", show_col_types = FALSE)
-
+# 2026-08-28: b=0 ("feedback off") and b=0.50 (the locked main-text
+# value) folded back INTO this grid (previously shown separately in a
+# now-removed panel A, then deliberately excluded from this panel to
+# avoid duplicating it -- see the top-of-file merge note). Re-sourced
+# from 03c_sim_feedback_shock_grid_extended.R throughout, windowed to
+# 0-2500 steps so the off/on lines are shown actually reconverging
+# rather than cut off mid-recovery.
+#
+# Caveat, stated plainly: the peak/end-of-window NUMBERS quoted in the
+# Results paragraph (e.g. "4.34 active symptoms," "2.57 active symptoms")
+# still come from the ORIGINAL locked Simulation 2/3 run, not from this
+# 03c companion run -- 03c uses identical parameters but is a separate
+# simulation (different random draws), so the b=0/b=0.50 curves here will
+# be qualitatively identical but not pixel-identical to those exact
+# quoted numbers.
+#
 # b=1.10 was checked against the rerun (2500-step window) and DROPPED:
 # unlike b=1.30 (which visibly flattens, rising only ~0.03 over the last
 # 1000 steps) and b=1.00 (~0.02 residual drift, essentially flat),
@@ -247,53 +150,90 @@ sim3c <- read_csv("res/revision_2026/sim3c/sim3c_summary.csv", show_col_types = 
 # itself, but not something we can currently show as "resolved" next to
 # genuinely plateaued curves without overclaiming. Left out for the same
 # reason 1.25/1.50 were left out of the original 1500-step version.
-display_b_grid <- c(0.75, 0.90, 1.00, 1.30)
+display_b_grid <- c(0, 0.50, 0.75, 0.90, 1.00, 1.30)
+
+sim3c <- read_csv("res/revision_2026/sim3c/sim3c_summary.csv", show_col_types = FALSE)
+sim3c_raw <- readRDS("res/revision_2026/sim3c/sim3c_raw.rds")$traj
 
 plot_window_grid <- c(-100, 2500)
+N <- 9
+
 grid_w <- sim3c |> filter(b %in% display_b_grid, time_since_shock >= plot_window_grid[1], time_since_shock <= plot_window_grid[2]) |>
   arrange(b, time_since_shock) |>
   group_by(b) |>
   mutate(mean_m_smooth = roll_mean(mean_m), se_m_smooth = roll_mean(se_M / N)) |>
   ungroup() |>
-  mutate(mean_M_smooth = mean_m_smooth * N, se_M_smooth = se_m_smooth * N)  # see a_summary note above
+  mutate(mean_M_smooth = mean_m_smooth * N, se_M_smooth = se_m_smooth * N)  # count-scale, see header note
 
 b_levels <- sort(unique(grid_w$b))
-grid_pal <- setNames(colorRampPalette(c(col_off, col_on, col_high))(length(b_levels)), b_levels)
-grid_labels <- setNames(sprintf("b = %.2f", b_levels), b_levels)
+# 2026-08-28: colour ramps (RGB, then Lab-space) and the Set3 qualitative
+# palette were all tried here and all still left some adjacent b's too
+# close in hue to tell apart at a glance. Switched to a HAND-PICKED set of
+# 6 colours chosen for maximum pairwise separation around the colour
+# wheel (gray, green, blue, violet, amber, red) rather than any
+# interpolated/automatic palette -- deliberately breaks from the "no
+# rainbow" restraint used elsewhere in this figure set, because with 6
+# ordered lines sharing one panel, legibility here matters more than
+# palette minimalism.
+grid_pal <- c(
+  "0"    = gray_off_dark,  # feedback off
+  "0.5"  = col_low,        # locked main-text value
+  "0.75" = col_on,
+  "0.9"  = "#8E6FAE",
+  "1"    = "#D4A017",
+  "1.3"  = col_high
+)
+grid_pal <- grid_pal[as.character(b_levels)]  # order/subset to match whatever b's actually ended up in the data
+# Two label sets (2026-08-28): the in-panel end-of-line labels now just
+# say "b = 0" for the zero line, matching the plain "b = X.XX" style of
+# the other five lines -- "Feedback off (b = 0)" was cluttering the plot
+# area. The fuller "Feedback off (b = 0)" phrasing is kept for the LEGEND
+# only, where there's room for it and it's more helpful to a reader
+# scanning the legend cold.
+grid_labels_plot <- setNames(sprintf("b = %.2f", b_levels), b_levels)
+grid_labels_plot[as.character(0)] <- "b = 0"
 
-# Individual-chain spaghetti, same per-chain-smoothing fix used for panel
-# A (raw m is a per-sweep discrete count -- smooth EACH chain first, not
-# just the aggregate mean, or it renders as noise-hash rather than
-# legible trajectories). display_b_grid has 4 lines -- enough visual room
-# for thinned-down individual chains without them turning into a block.
+grid_labels_legend <- setNames(sprintf("b = %.2f", b_levels), b_levels)
+grid_labels_legend[as.character(0)] <- "Feedback off (b = 0)"
+
+# Individual-chain spaghetti: kept ONLY for b=0 and b=0.50 (the two
+# "headline" lines, formerly panel A's dedicated off/on comparison) --
+# with 6 lines now in this panel, spaghetti across ALL of them would
+# repeat the earlier-established problem (illegible past ~4 simultaneous
+# lines). The other four grid points show mean + ribbon only.
+set.seed(3)
+n_sample_chains_headline <- 30L
 set.seed(11)
-# Thinned from 25 to 10 chains/b per review -- with panel A now carrying
-# the precise, focused off/on comparison, panel B's job is to show the
-# broader shape of the transition across b, not to re-carry the same
-# individual-trajectory detail. Fewer, fainter background chains keep
-# the multi-line panel from getting visually noisy.
 n_sample_chains_grid <- 10L
-sim3c_raw <- readRDS("res/revision_2026/sim3c/sim3c_raw.rds")$traj |>
+
+sim3c_raw_grid <- sim3c_raw |>
   filter(b %in% display_b_grid, time_since_shock >= plot_window_grid[1], time_since_shock <= plot_window_grid[2])
 
-grid_chains <- sim3c_raw |>
+headline_chains <- sim3c_raw_grid |>
+  filter(b %in% c(0, 0.5)) |>
+  group_by(b) |>
+  filter(chain %in% sample(unique(chain), n_sample_chains_headline)) |>
+  ungroup()
+
+other_grid_chains <- sim3c_raw_grid |>
+  filter(!b %in% c(0, 0.5)) |>
   group_by(b) |>
   filter(chain %in% sample(unique(chain), n_sample_chains_grid)) |>
-  ungroup() |>
+  ungroup()
+
+grid_chains <- bind_rows(headline_chains, other_grid_chains) |>
   arrange(b, chain, time_since_shock) |>
   group_by(b, chain) |>
   mutate(m = roll_mean(m)) |>
   ungroup() |>
   filter(!is.na(m)) |>
-  mutate(M = m * N)  # count-scale version for plotting, see a_summary note above
+  mutate(M = m * N)  # count-scale version for plotting, see grid_w note above
 
-# grid_w no longer contains b=0 (dropped from the display set, see above),
-# so the old "pre-shock baseline from the b=0 rows" trick would silently
-# return NaN here. Reuse panel A's m_ref_a instead -- same pre-shock
-# baseline concept (feedback doesn't change pre-shock dynamics, so it
-# doesn't matter which b the reference line is computed from).
-m_ref_grid <- m_ref_a
-M_ref_grid <- M_ref_a
+# grid_w now DOES contain b=0 again -- pre-shock baseline computed
+# directly from those rows (feedback doesn't change pre-shock dynamics,
+# so b=0 is as valid a source for this reference line as any other b).
+m_ref_grid <- mean(grid_w$mean_m_smooth[grid_w$b == 0 & grid_w$time_since_shock < 0], na.rm = TRUE)
+M_ref_grid <- m_ref_grid * N
 x_max_grid <- plot_window_grid[2]
 
 grid_end <- grid_w |> filter(!is.na(mean_M_smooth)) |> group_by(b) |>
@@ -314,6 +254,42 @@ if (nrow(grid_end) > 1) {
   grid_end$label_y <- grid_end$mean_M_smooth
 }
 
+# Local tweaks (2026-08-28, this panel only): mean lines thinned slightly
+# from the shared main_line_width (now that 6 lines share the panel, a
+# touch thinner reads as less heavy/overlapping); end-of-line "b = ..."
+# labels enlarged from 2.8 to 3.4 for legibility.
+grid_line_width <- main_line_width * 0.82
+grid_label_size <- 4.4  # bumped again 2026-08-28 (was 3.4, then 2.8 originally)
+
+# y-axis zoomed to the data's actual range (2026-08-28), rather than
+# ggplot's default expansion -- b=0 and b=0.50 both recover to nearly the
+# same baseline, and with 6 lines sharing one axis (including b=1.30's
+# much higher plateau) that small gap was getting visually compressed.
+# Tightening the range + padding, combined with giving this panel more
+# vertical room in the final layout below, makes better use of the
+# panel's height for exactly the part of the range where the lines are
+# close together.
+#
+# FIX (2026-08-28): the range above was computed only from the mean+CI
+# band (grid_w), not the individual-chain spaghetti (grid_chains) drawn
+# underneath it -- raw per-chain noise swings well outside the mean's CI,
+# so coord_cartesian(ylim=...) was silently clipping the spaghetti lines
+# flat at the top/bottom of the panel instead of showing their actual
+# peaks/troughs. Range now also includes grid_chains$M so the axis covers
+# everything actually drawn, not just the mean lines.
+grid_y_lo <- min(
+  grid_w$mean_M_smooth - interval_mult * grid_w$se_M_smooth,
+  grid_chains$M,
+  na.rm = TRUE
+)
+grid_y_hi <- max(
+  grid_w$mean_M_smooth + interval_mult * grid_w$se_M_smooth,
+  grid_chains$M,
+  na.rm = TRUE
+)
+grid_y_pad <- 0.05 * (grid_y_hi - grid_y_lo)
+grid_ylim <- c(grid_y_lo - grid_y_pad, grid_y_hi + grid_y_pad)
+
 pGrid <- ggplot(grid_w, aes(x = time_since_shock, y = mean_M_smooth, colour = factor(b), group = factor(b))) +
   geom_hline(yintercept = M_ref_grid, colour = "grey78", linewidth = 0.4) +
   geom_vline(xintercept = 0, linetype = "dashed", colour = "grey60", linewidth = 0.4) +
@@ -326,33 +302,42 @@ pGrid <- ggplot(grid_w, aes(x = time_since_shock, y = mean_M_smooth, colour = fa
     aes(ymin = mean_M_smooth - interval_mult * se_M_smooth, ymax = mean_M_smooth + interval_mult * se_M_smooth, fill = factor(b)),
     alpha = ribbon_alpha, colour = NA, show.legend = FALSE
   ) +
-  geom_line(linewidth = main_line_width) +
+  geom_line(linewidth = grid_line_width) +
   geom_text(
-    data = grid_end, aes(x = x_max_grid + 30, y = label_y, label = grid_labels[as.character(b)], colour = factor(b)),
-    hjust = 0, size = 2.8, fontface = "plain", show.legend = FALSE
+    data = grid_end, aes(x = x_max_grid + 30, y = label_y, label = grid_labels_plot[as.character(b)], colour = factor(b)),
+    hjust = 0, size = grid_label_size, fontface = "plain", show.legend = FALSE
   ) +
-  coord_cartesian(xlim = c(plot_window_grid[1], x_max_grid), clip = "off") +
-  scale_colour_manual(values = grid_pal, labels = grid_labels, name = NULL) +
+  coord_cartesian(xlim = c(plot_window_grid[1], x_max_grid), ylim = grid_ylim, clip = "off") +
+  scale_colour_manual(values = grid_pal, labels = grid_labels_legend, name = NULL) +
   scale_fill_manual(values = grid_pal, guide = "none") +
   scale_x_continuous(expand = expansion(mult = c(0.01, 0.11))) +
+  guides(colour = guide_legend(nrow = 2, byrow = TRUE)) +  # 6 entries now (was 4) -- wrap to 2 rows so labels don't crowd/shrink in one row
   labs(
-    title = panel_title("B", "Recovery changes across feedback strengths"),
+    title = panel_title("A", "Feedback strength changes whether the system recovers"),
     x = "Steps since perturbation", y = "Mean number of active symptoms"
   ) +
   theme_pub(base_size = base_sz) +
   theme(
-    plot.margin = margin(5.5, 62, 5.5, 5.5),
+    # right margin bumped 62 -> 72 -> 88 (2026-08-28): end-of-line labels
+    # are now considerably larger (grid_label_size 4.4, was 2.8 originally)
+    # and need more headroom to avoid clipping, especially the long
+    # "Feedback off (b = 0)" label -- check the rendered PNG for clipping,
+    # this is an estimate, not a measured value.
+    plot.margin = margin(5.5, 88, 5.5, 5.5),
     legend.position = "bottom",
     legend.key.width = unit(0.9, "cm"),
-    legend.text = element_text(size = base_sz - 3)
+    legend.text = element_text(size = legend_text_sz),
+    plot.title = element_text(size = panel_title_sz),
+    axis.title = element_text(size = axis_title_sz),
+    axis.text = element_text(size = axis_text_sz)
   )
 
-# ------------------------------------------------------------------------
-# Panel C: history-dependence index across the full feedback-strength grid
-# ------------------------------------------------------------------------
 sep <- read_csv("res/revision_2026/supp_history/history_separation_summary.csv", show_col_types = FALSE)
 
-regime_pal <- c(convergent = col_off, `history-dependent` = col_high, `runaway/saturation` = "black")
+# gray_off_dark in place of col_off (2026-08-27, same fix as panel A) --
+# "reconvergent" points were rendering in the same washed-out gray that
+# was hard to distinguish from the panel background.
+regime_pal <- c(convergent = gray_off_dark, `history-dependent` = col_high, `runaway/saturation` = "black")
 
 # Locate the locked main-text b (0.50) by nearest value, not exact
 # equality -- the grid is now generated via seq(0, 1.5, by = 0.1), and
@@ -360,7 +345,7 @@ regime_pal <- c(convergent = col_off, `history-dependent` = col_high, `runaway/s
 # of silently matching nothing due to floating-point drift.
 locked_b_row <- sep[which.min(abs(sep$b - 0.5)), ]
 
-pC <- ggplot(sep, aes(x = b, y = separation_m)) +
+pB <- ggplot(sep, aes(x = b, y = separation_m)) +
   geom_hline(yintercept = 0, linetype = "dashed", colour = "grey55", linewidth = 0.4) +
   geom_hline(yintercept = 0.15, linetype = "dotted", colour = "grey55", linewidth = 0.4) +
   # Connecting line -- now that the grid is dense (16 points), this turns
@@ -377,7 +362,10 @@ pC <- ggplot(sep, aes(x = b, y = separation_m)) +
   # vertical-line version was tried but the circle+text combo was
   # preferred after all.
   annotate("point", x = locked_b_row$b, y = locked_b_row$separation_m, shape = 21, size = 5.5, colour = col_on, stroke = 1.0) +
-  annotate("text", x = locked_b_row$b, y = locked_b_row$separation_m + 0.06, label = "main simulation\nvalue", size = 2.7, colour = col_on, hjust = 0.5, vjust = 0, lineheight = 0.85) +
+  # text size bumped 2.7 -> 3.8 (2026-08-28) per feedback -- check the
+  # rendered PNG for collision with nearby points/gridlines now that the
+  # label is noticeably bigger.
+  annotate("text", x = locked_b_row$b, y = locked_b_row$separation_m + 0.07, label = "main simulation\nvalue", size = 3.8, colour = col_on, hjust = 0.5, vjust = 0, lineheight = 0.85) +
   # 2026-08-27: relabeled at the DISPLAY level only -- regime_flag's
   # underlying values ("convergent"/"history-dependent", from
   # 05_supp_regime_history_dependence.R) are unchanged, so this doesn't
@@ -394,29 +382,37 @@ pC <- ggplot(sep, aes(x = b, y = separation_m)) +
     )
   ) +
   labs(
-    title = panel_title("C", "Initial-state dependence emerges at higher feedback"),
+    title = panel_title("B", "Initial-state dependence emerges at higher feedback"),
     x = "Feedback strength (b)", y = "Difference in late mean symptom activation"
   ) +
   theme_pub(base_size = base_sz) +
-  theme(legend.position = "bottom")
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = legend_text_sz),
+    plot.title = element_text(size = panel_title_sz),
+    axis.title = element_text(size = axis_title_sz),
+    axis.text = element_text(size = axis_text_sz)
+  )
 
 # ------------------------------------------------------------------------
-# Combine + save -- A (locked b=0.50 recovery, precise/high-chain-count),
-# B (same shock design swept across the full b-grid, shared visual
-# language with A), C (the regime-index summary tying the grid together).
-# Each panel keeps its OWN local legend rather than collecting into one
-# shared legend -- A/B/C's colour scales are three different variables,
-# not levels of one; collecting them earlier produced one crammed,
-# clipped row that also read as though unrelated categories (e.g.
-# "Feedback off" and "convergent") were comparable.
+# Combine + save -- A (shock-and-recovery across the full b-grid,
+# including b=0/b=0.50), B (the regime-index summary tying the grid
+# together). Each panel keeps its OWN local legend rather than collecting
+# into one shared legend -- A/B's colour scales are two different
+# variables, not levels of one.
 # ------------------------------------------------------------------------
-fig3 <- (pA / pGrid / pC) +
-  plot_layout(heights = c(1, 1, 1.05))
+# height ratio bumped 1.15 -> 1.5 (2026-08-28), and canvas height 7.6 ->
+# 8.4, so panel A's now-tightened y-range (grid_ylim above) gets more
+# vertical pixels to resolve the close b=0/b=0.50 gap -- check the
+# rendered PNG; if panel A now looks disproportionately tall next to B,
+# scale this back down a little.
+fig3 <- (pGrid / pB) +
+  plot_layout(heights = c(1.7, 1))
 
 dir.create("figs/revision_2026", recursive = TRUE, showWarnings = FALSE)
 
-ggsave("figs/revision_2026/Figure3_regimes.pdf", fig3, width = 7.8, height = 10.6)
-ggsave("figs/revision_2026/Figure3_regimes.png", fig3, width = 7.8, height = 10.6, dpi = 300)
+ggsave("figs/revision_2026/Figure3_regimes.pdf", fig3, width =12, height = 10)
+ggsave("figs/revision_2026/Figure3_regimes.png", fig3, width = 7.8, height = 8.4, dpi = 300)
 
 cat("Done. Files:\n")
 cat("  figs/revision_2026/Figure3_regimes.pdf (+ .png)\n")

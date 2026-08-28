@@ -191,10 +191,19 @@ abbrev_key <- paste(sprintf("%s = %s", phq_abbrev, names(phq_abbrev)), collapse 
 draw_abbrev_strip <- function() {
   par(mar = c(0, 0, 0, 0))
   plot.new()
-  # 2026-08-27: cex bumped 0.75 -> 1.0, matching the label.cex/title.cex
-  # increase above -- the strip row still has room for it in the 2x2
-  # layout (its own row height, 0.34 relative units, is unchanged).
-  text(0.5, 0.5, abbrev_key, cex = 1.0, col = "grey30")
+  # 2026-08-28 fix: at a FIXED cex=1.0 (set 2026-08-27), the full
+  # abbreviation string is wider than the plotting device, so text(),
+  # being centered (default adj=0.5), silently clips characters off BOTH
+  # ends -- this is what made "ANH = anhedonia" render as "NH = anhedonia"
+  # (leading "A" clipped). It wasn't a wrong abbreviation, it was
+  # overflow. Auto-shrink cex with strwidth() until the string actually
+  # fits the device width, so this can't silently clip again regardless
+  # of the final export size.
+  cex_fit <- 1.0
+  while (strwidth(abbrev_key, cex = cex_fit) > 0.96 && cex_fit > 0.4) {
+    cex_fit <- cex_fit - 0.02
+  }
+  text(0.5, 0.5, abbrev_key, cex = cex_fit, col = "grey30")
 }
 
 # 2026-08-27, second revision: switched from a single row of 4 panels to
