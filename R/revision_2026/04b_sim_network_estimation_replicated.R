@@ -47,7 +47,7 @@ source("R/revision_2026/00_parameters_uncentered01.R")  # tau (+1.3 shift), omeg
 # ------------------------------------------------------------------------
 T_burn   <- 200L
 n_reps   <- 30L
-n_person <- 3000L   # per arm, per replicate -- lower than the single-run
+n_person <- 10000L   # per arm, per replicate -- lower than the single-run
                      # pilot's 10000 because averaging over n_reps=30
                      # replicates shrinks the SE of the MEAN by ~sqrt(30)
                      # ~= 5.5x regardless of per-replicate noise; 3000 was
@@ -88,14 +88,30 @@ generate_arm_data_seq <- function(Pvec) {
 }
 
 arm_metrics <- function(omega_hat) {
-  err <- omega_hat[iu] - true_omega_edges
-  nz <- true_omega_edges != 0
+  est <- omega_hat[iu]
+  err <- est - true_omega_edges
+  nz  <- true_omega_edges != 0
+  
   tibble(
-    global_strength_est = sum(abs(omega_hat[iu])),
+    # Keep conventional global strength as a diagnostic,
+    # but do not use it as the primary recovery metric
+    global_strength_est = sum(abs(est)),
+    
+    # Primary recovery metric: all generating couplings are positive,
+    # so signed sampling error around true zero edges can cancel
+    total_coupling_est = sum(est),
+    
+    # Decompose the absolute-strength statistic
+    abs_strength_true_edges = sum(abs(est[nz])),
+    spurious_abs_coupling   = sum(abs(est[!nz])),
+    
+    # Existing recovery diagnostics
     mae_all = mean(abs(err)),
     mae_true_nonzero = mean(abs(err[nz])),
     mae_true_zero = mean(abs(err[!nz])),
-    n_phantom_edges_gt_01 = sum(!nz & abs(omega_hat[iu]) > 0.1)
+    
+    # Keep old thresholded metric for supplementary/diagnostic use
+    n_phantom_edges_gt_01 = sum(!nz & abs(est) > 0.1)
   )
 }
 
@@ -124,11 +140,28 @@ run_replicate <- function(rep_id) {
   m_adj   <- arm_metrics(omega_hat_adjusted)
   diff_row <- tibble(
     rep = rep_id,
-    diff_global_strength = m_naive$global_strength_est - m_adj$global_strength_est,
-    diff_mae_all = m_naive$mae_all - m_adj$mae_all,
-    diff_mae_true_zero = m_naive$mae_true_zero - m_adj$mae_true_zero,
-    diff_mae_true_nonzero = m_naive$mae_true_nonzero - m_adj$mae_true_nonzero,
-    diff_phantom = m_naive$n_phantom_edges_gt_01 - m_adj$n_phantom_edges_gt_01
+    
+    diff_total_coupling =
+      m_naive$total_coupling_est - m_adj$total_coupling_est,
+    
+    diff_spurious_abs_coupling =
+      m_naive$spurious_abs_coupling - m_adj$spurious_abs_coupling,
+    
+    # Keep these for diagnostics
+    diff_global_strength =
+      m_naive$global_strength_est - m_adj$global_strength_est,
+    
+    diff_mae_all =
+      m_naive$mae_all - m_adj$mae_all,
+    
+    diff_mae_true_zero =
+      m_naive$mae_true_zero - m_adj$mae_true_zero,
+    
+    diff_mae_true_nonzero =
+      m_naive$mae_true_nonzero - m_adj$mae_true_nonzero,
+    
+    diff_phantom =
+      m_naive$n_phantom_edges_gt_01 - m_adj$n_phantom_edges_gt_01
   )
 
   list(by_arm = by_arm, diff_row = diff_row)
@@ -171,16 +204,41 @@ se <- function(x) sd(x) / sqrt(length(x))
 
 summary_by_arm <- by_arm_all |>
   group_by(arm) |>
-  summarise(across(c(global_strength_est, mae_all, mae_true_nonzero, mae_true_zero, n_phantom_edges_gt_01),
-                    list(mean = mean, se = se), .names = "{.col}_{.fn}"),
-            .groups = "drop")
+  summarise(
+    across(
+      c(
+        global_strength_est,
+        total_coupling_est,
+        abs_strength_true_edges,
+        spurious_abs_coupling,
+        mae_all,
+        mae_true_nonzero,
+        mae_true_zero,
+        n_phantom_edges_gt_01
+      ),
+      list(mean = mean, se = se),
+      .names = "{.col}_{.fn}"
+    ),
+    .groups = "drop"
+  )
 write.csv(summary_by_arm, "res/revision_2026/sim4/sim4_replicated_summary_by_arm.csv", row.names = FALSE)
 
 summary_diff <- diff_all |>
   summarise(across(starts_with("diff_"), list(mean = mean, se = se), .names = "{.col}_{.fn}")) |>
   mutate(
-    pct_reps_naive_gt_adjusted_gs  = mean(diff_all$diff_global_strength > 0) * 100,
-    pct_reps_naive_gt_adjusted_mtz = mean(diff_all$diff_mae_true_zero > 0) * 100,
+    pct_reps_naive_gt_adjusted_total =
+      mean(diff_all$diff_total_coupling > 0) * 100,
+    
+    pct_reps_naive_gt_adjusted_spurious =
+      mean(diff_all$diff_spurious_abs_coupling > 0) * 100,
+    
+    # retain older diagnostics
+    pct_reps_naive_gt_adjusted_gs =
+      mean(diff_all$diff_global_strength > 0) * 100,
+    
+    pct_reps_naive_gt_adjusted_mtz =
+      mean(diff_all$diff_mae_true_zero > 0) * 100,
+    
     n_reps = n_reps
   )
 write.csv(summary_diff, "res/revision_2026/sim4/sim4_replicated_summary_diff.csv", row.names = FALSE)

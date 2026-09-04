@@ -73,7 +73,7 @@ label_size_strip <- 3.4   # geom_text size is in mm, not pt
 
 # Matches the locked Sim 4 results text (10 edges, weights 0.20-0.45);
 # not recomputed here to keep this script's only input the replicated CSV.
-true_gs <- 3.05
+true_total_coupling <- 3.05
 
 arm_labels <- c(
   baseline = "Fixed P",
@@ -84,23 +84,12 @@ arm_labels <- c(
 summary_by_arm <- by_arm |>
   group_by(arm) |>
   summarise(
-    gs_mean        = mean(global_strength_est),
-    gs_se          = se(global_strength_est),
-    # gs_excess_mean/se kept (unused by panel E below as of 2026-08-27,
-    # see note) in case anything downstream still wants the differenced
-    # version -- cheap to keep, not worth ripping out.
-    gs_excess_mean = mean(global_strength_est - true_gs),
-    gs_excess_se   = se(global_strength_est - true_gs),
-    mtz_mean       = mean(mae_true_zero),
-    mtz_se         = se(mae_true_zero),
-    # 2026-08-27: added for panel F's replacement metric -- count of
-    # apparent edges (|omega_hat| > 0.10) among symptom pairs with NO
-    # direct coupling in the data-generating matrix. Matches the Results
-    # prose's "11.83 vs 8.70 apparent edges" numbers directly, unlike
-    # mae_true_zero (0.106 vs 0.087) which is a less concrete quantity
-    # for a reader to hold onto.
-    phantom_mean   = mean(n_phantom_edges_gt_01),
-    phantom_se     = se(n_phantom_edges_gt_01),
+    coupling_mean = mean(total_coupling_est),
+    coupling_se   = se(total_coupling_est),
+    
+    spurious_mean = mean(spurious_abs_coupling),
+    spurious_se   = se(spurious_abs_coupling),
+    
     .groups = "drop"
   )
 
@@ -121,23 +110,37 @@ summary_by_arm <- by_arm |>
 # gs_mean/mtz_mean meaningfully, check the rendered PNG for clipped
 # points/error bars before trusting these fixed ranges again.
 # ------------------------------------------------------------------------
-pE <- ggplot(summary_by_arm, aes(x = arm, y = gs_mean, colour = arm)) +
-  geom_hline(yintercept = true_gs, linetype = "dashed", colour = "grey55", linewidth = 0.45) +
-  annotate("text", x = 0.58, y = true_gs, label = "Data-generating value", size = 2.9,
-           colour = "grey45", hjust = 0, vjust = -0.6) +
+pE <- ggplot(
+  summary_by_arm,
+  aes(x = arm, y = coupling_mean, colour = arm)
+) +
+  geom_hline(
+    yintercept = true_total_coupling,
+    linetype = "dashed",
+    colour = "grey55",
+    linewidth = 0.45
+  ) +
+  annotate(
+    "text",
+    x = 0.58,
+    y = true_total_coupling,
+    label = "Data-generating value",
+    size = 2.9,
+    colour = "grey45",
+    hjust = 0,
+    vjust = -0.6
+  ) +
   geom_pointrange(
-    aes(ymin = gs_mean - gs_se,
-        ymax = gs_mean + gs_se),
+    aes(
+      ymin = coupling_mean - coupling_se,
+      ymax = coupling_mean + coupling_se
+    ),
     linewidth = 0.85,
-    # size shrunk 0.75 -> 0.4 (2026-08-27): these SEs are small (~0.08-0.10,
-    # 30 replicates) -- at the old point size, the marker itself was wider
-    # than the error bar's vertical extent and fully hid it. Smaller marker
-    # lets the true (short) tail poke out visibly above/below the dot.
     size = 0.4,
     alpha = 0.9
   ) +
   geom_text(
-    aes(label = sprintf("%.2f", gs_mean)),
+    aes(label = sprintf("%.2f", coupling_mean)),
     nudge_x = 0.10,
     hjust = 0,
     size = label_size_strip,
@@ -145,15 +148,10 @@ pE <- ggplot(summary_by_arm, aes(x = arm, y = gs_mean, colour = arm)) +
   ) +
   scale_colour_manual(values = pal_arm, guide = "none") +
   scale_x_discrete(labels = arm_labels) +
-  scale_y_continuous(
-    limits = c(2.7, 7.0),
-    breaks = seq(3, 7, 1),
-    expand = expansion(mult = c(0.02, 0.06))
-  ) +
   labs(
-    title = panel_title("E", "Estimated global strength"),
+    title = panel_title("E", "Estimated total coupling"),
     x = NULL,
-    y = "Estimated global strength"
+    y = "Estimated total coupling"
   ) +
   theme_pub(base_size = 9.5) +
   theme(
@@ -179,23 +177,21 @@ pE <- ggplot(summary_by_arm, aes(x = arm, y = gs_mean, colour = arm)) +
 # Results text; the baseline arm's value isn't, and the 0-14 range below
 # is a generous guess, not a computed bound).
 # ------------------------------------------------------------------------
-pF <- ggplot(summary_by_arm, aes(x = arm, y = phantom_mean, colour = arm)) +
+pF <- ggplot(
+  summary_by_arm,
+  aes(x = arm, y = spurious_mean, colour = arm)
+) +
   geom_pointrange(
-    aes(ymin = phantom_mean - phantom_se,
-        ymax = phantom_mean + phantom_se),
+    aes(
+      ymin = spurious_mean - spurious_se,
+      ymax = spurious_mean + spurious_se
+    ),
     linewidth = 0.65,
-    # size shrunk 0.55 -> 0.35 (2026-08-27), same reasoning as panel E --
-    # phantom_se (~0.4, per naive/adjusted SEs quoted in the Results text)
-    # is small relative to the marker at the old size, likely hidden
-    # under it. Also still pending: tightening the y-axis limits/breaks
-    # below once the actual data range is known (see note above) -- a
-    # smaller marker alone won't fix a tail that's invisible because the
-    # AXIS is too wide, only one that's hidden under an oversized point.
     size = 0.35,
     alpha = 0.85
   ) +
   geom_text(
-    aes(label = sprintf("%.2f", phantom_mean)),
+    aes(label = sprintf("%.2f", spurious_mean)),
     nudge_x = 0.10,
     hjust = 0,
     size = label_size_strip,
@@ -203,15 +199,10 @@ pF <- ggplot(summary_by_arm, aes(x = arm, y = phantom_mean, colour = arm)) +
   ) +
   scale_colour_manual(values = pal_arm, guide = "none") +
   scale_x_discrete(labels = arm_labels) +
-  scale_y_continuous(
-    limits = c(0, 14),
-    breaks = c(0, 5, 10),
-    expand = expansion(mult = c(0.02, 0.06))
-  ) +
   labs(
-    title = panel_title("F", "Apparent extra edges"),
+    title = panel_title("F", "Spurious coupling among uncoupled pairs"),
     x = NULL,
-    y = "Number of apparent extra edges > 0.10"
+    y = "Absolute estimated coupling on true-zero edges"
   ) +
   theme_pub(base_size = 9.5) +
   theme(
