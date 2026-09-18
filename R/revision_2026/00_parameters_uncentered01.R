@@ -4,10 +4,9 @@
 # Symptom names, tau_i, omega_ij, gamma_i for the revised uncentered 0/1
 # model. Replaces 01_create_finalparams.R for the revision track.
 #
-# These tau/gamma/omega values are theoretical, not fit to any single
-# dataset -- chosen to be qualitatively consistent with the sign,
-# magnitude, and sparsity typically reported in cross-sectional symptom
-# network studies of depression (e.g., Cramer et al., 2016).
+# These tau/gamma/omega values are theoretical and are not fit to an
+# empirical dataset. They were selected to produce heterogeneous,
+# non-degenerate symptom activation across the simulation conditions.
 # ============================================================
 
 symptoms <- c(

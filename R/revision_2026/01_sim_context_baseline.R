@@ -21,6 +21,8 @@ suppressPackageStartupMessages({
 
 source("R/revision_2026/utils_uncentered01_model.R")
 source("R/revision_2026/00_parameters_uncentered01.R")  # defines symptoms, N, tau, gamma, omega
+source("R/revision_2026/figures/theme_publication.R")   # shared theme_pub() + pal_context, so this
+                                                           # diagnostic figure matches the rest of the set
 
 # ------------------------------------------------------------------------
 # Design
@@ -179,16 +181,40 @@ cat("If |drift| is small relative to the between-condition differences in\n")
 cat("mean_M above, T_burn = 200 is adequate. If drift is still substantial\n")
 cat("(comparable in size to the low-vs-high P gap), increase T_burn and rerun.\n")
 
-p2 <- ggplot(trace_all, aes(x = sweep, y = M, group = chain)) +
-  geom_line(alpha = 0.35, linewidth = 0.3) +
-  geom_vline(xintercept = T_burn, linetype = "dashed", colour = "red") +
-  facet_wrap(~condition, ncol = 1) +
-  labs(x = "Sweep", y = "Symptom activation (M)",
-       title = sprintf("Simulation 1: burn-in trace (%d example chains per condition)", n_trace_chains),
-       subtitle = "Dashed red line = end of burn-in (T_burn). Traces should look flat/stationary by then.") +
-  theme_classic(base_size = 12)
+# low/middle/high instead of ggplot's default alphabetical facet order
+trace_all <- trace_all |>
+  mutate(condition = factor(condition, levels = c("low", "middle", "high")))
 
-ggsave("figs/revision_2026/fig_sim1_burnin_trace.pdf", p2, width = 8, height = 8)
+# Mean across the n_trace_chains example chains, per sweep -- a much
+# smoother summary than any single raw chain, layered on top of the
+# spaghetti so the "flat on both sides of T_burn" claim doesn't require
+# the reader to eyeball 10 overlapping noisy lines to see it.
+trace_mean <- trace_all |>
+  group_by(condition, sweep) |>
+  summarise(M = mean(M), .groups = "drop")
+
+burn_label_df <- trace_all |>
+  filter(condition == "low") |>
+  summarise(x = T_burn * 0.4, y = max(M) * 0.97, .groups = "drop") |>
+  mutate(condition = factor("low", levels = levels(trace_all$condition)), lab = "Burn-in\n(excluded)")
+
+p2 <- ggplot(trace_all, aes(x = sweep, y = M)) +
+  annotate("rect", xmin = -Inf, xmax = T_burn, ymin = -Inf, ymax = Inf,
+           fill = "grey75", alpha = 0.25) +
+  geom_text(data = burn_label_df, aes(x = x, y = y, label = lab),
+            colour = "grey35", fontface = 2, size = 3.2, vjust = 1, hjust = 0.5) +
+  geom_line(aes(group = chain, colour = condition),
+            linewidth = spaghetti_width, alpha = spaghetti_alpha) +
+  geom_line(data = trace_mean, aes(colour = condition), linewidth = main_line_width) +
+  geom_vline(xintercept = T_burn, linetype = "dashed", colour = "grey30", linewidth = 0.4) +
+  facet_wrap(~condition, ncol = 1) +
+  scale_colour_manual(values = pal_context, guide = "none") +
+  labs(x = "Sweep", y = "Symptom activation (M)",
+       title = sprintf("Simulation 1: burn-in trace (%d example chains per condition, bold = mean)", n_trace_chains),
+       subtitle = "Shaded region = burn-in, excluded from analysis. Traces should look the same on both sides.") +
+  theme_pub()
+
+ggsave("figs/revision_2026/fig_sim1_burnin_trace.pdf", p2, width = 7.5, height = 7.5)
 
 cat("\nDone. Files:\n")
 cat("  res/revision_2026/sim1/sim1_raw.rds\n")
