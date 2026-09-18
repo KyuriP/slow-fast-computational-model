@@ -2,48 +2,33 @@
 # R/revision_2026/figures/fig3_perturbation_recovery.R
 # ============================================================
 # Figure for Simulation 2 (2026-08-27, replaces fig3_stress_recovery.R):
-# a perturbation to the slow field is described entirely in prose in the
-# manuscript, with no accompanying figure -- the numbers (P_t jumps to
-# ~1.00, symptom activation peaks at ~4.73, both recover) read as
-# "floating" without a time-course panel. This script builds that figure:
-# mean P_t and mean number of active symptoms over time, feedback off
-# (b=0, matching Simulation 2's design), each as a bold mean trajectory
-# with a light 95% ribbon and a SMALL sample of individual chains.
+# the manuscript describes a perturbation to the slow field entirely in
+# prose (P_t jumps to ~1.00, symptom activation peaks at ~4.73, both
+# recover) with no time-course figure backing those numbers up. This
+# builds that: mean P_t and mean number of active symptoms over time,
+# feedback off (b=0, matching Sim 2), each as a bold mean trajectory with
+# a light 95% ribbon and a small sample of individual chains.
 #
-# Renamed from fig3_stress_recovery.R -- Simulation 2 is not modeling
-# stressor occurrence, it's a one-time perturbation to P_t, so
-# "perturbation recovery" matches the manuscript's own framing
-# ("perturbation", "perturbation onset") rather than "stress".
+# Renamed from fig3_stress_recovery.R -- Sim 2 isn't modeling stressor
+# occurrence, it's a one-time perturbation to P_t, so "perturbation
+# recovery" matches the manuscript's own framing better than "stress".
 #
-# 2026-08-27, three rounds of revision on panel B specifically (panel A's
-# mean + light ribbon + small chain sample worked from the start and is
-# unchanged below):
-#   v1: ALL 200 chains shown as spaghetti, matching
-#       fig3_recovery_feedback.R's original panel B. Individual symptom
-#       counts are an integer 0-9 series -- 200 overlapping lines
-#       rendered as a solid orange block that obscured the mean recovery
-#       curve entirely.
-#   v2 (overcorrection): spaghetti removed, mean + ribbon only. Read as
-#       too sterile/flat.
-#   v3: a small sample of 12 chains, faint and thin. Still didn't work --
-#       discrete integer-valued step trajectories don't read as "faint
-#       texture" the way continuous P_t trajectories do; even 12 of them
-#       looked like a barcode rather than noise around a trend.
-#   v4 (this version): panel B is now a heatmap over (time, symptom
-#       count) with a bold mean line overlaid, not a spaghetti/ribbon
-#       plot at all. This fits the data better than any line-based
-#       approach: symptom count is discrete (0-9) and the quantity of
-#       real interest is how the FULL distribution across chains shifts
-#       and reshapes after the perturbation, not individual chain paths.
-#       Color intensity = proportion of the 200 chains at each symptom
-#       count, within a time bin. Panel A keeps the small-sample-
-#       spaghetti approach, since P_t is continuous and that version
-#       already read cleanly.
+# Panel B went through a few failed designs before landing on a heatmap:
+# all 200 chains as spaghetti rendered as a solid block that obscured the
+# mean curve; mean+ribbon alone read as too sterile; a faint 12-chain
+# sample still looked like a barcode rather than noise, since symptom
+# count is a discrete 0-9 series and doesn't read as texture the way a
+# continuous trajectory does. The heatmap (proportion of the 200 chains at
+# each symptom count, per time bin, with the bold mean line overlaid) fits
+# the data better: the real interest is how the FULL distribution shifts
+# and reshapes after the perturbation, not individual chain paths. Panel A
+# keeps the small-sample-spaghetti approach since P_t is continuous and
+# that version read cleanly from the start.
 #
 # Uses raw symptom counts (mean_M), not the mean_m fraction, so the
-# figure's y-axis matches the units actually cited in the Results prose
-# ("an average of 2.48 active symptoms", "peak of about 4.73 active
-# symptoms") -- no unit conversion for the reader to do in their head.
+# y-axis matches the units cited in the Results prose ("an average of 2.48
+# active symptoms", "peak of about 4.73") -- no unit conversion for the
+# reader to do in their head.
 #
 # Outputs
 # -------
@@ -68,9 +53,9 @@ sim2_w <- sim2 |> filter(time_since_shock >= plot_window[1], time_since_shock <=
 base_sz <- 11
 
 # ------------------------------------------------------------------------
-# 0a. Rolling-window smoothing for the symptom-count panel (display only,
-#     same as fig3_recovery_feedback.R). Two-sided moving average; edges
-#     become NA and are silently dropped by geom_line.
+# 0a. Rolling-window smoothing for the symptom-count panel (display only).
+#     Two-sided moving average; edges become NA and are silently dropped
+#     by geom_line.
 # ------------------------------------------------------------------------
 roll_mean <- function(x, k = 15) as.numeric(stats::filter(x, rep(1 / k, k), sides = 2))
 
@@ -79,11 +64,10 @@ sim2_w <- sim2_w |>
   mutate(mean_M_smooth = roll_mean(mean_M), se_M_smooth = roll_mean(se_M))
 
 # ------------------------------------------------------------------------
-# 0b. A SMALL sample of individual-chain trajectories (see header note --
-#     12, not all 200) for a faint spaghetti layer behind the mean in
-#     both panels. Individual-chain M is NOT rolling-smoothed -- the raw
-#     per-chain step noise is part of the point of showing a few of them
-#     (visible texture, not another smoothed summary curve).
+# 0b. A small sample (12 of 200 chains, see header note) for a faint
+#     spaghetti layer behind the mean in both panels. Individual-chain M is
+#     NOT rolling-smoothed -- the raw per-chain step noise is the point of
+#     showing a few of them (visible texture, not another smoothed curve).
 # ------------------------------------------------------------------------
 set.seed(3)
 n_sample_chains <- 25L
@@ -93,14 +77,12 @@ sim2_raw <- readRDS("res/revision_2026/sim2/sim2_raw.rds")$traj |>
 sim2_chains_w <- sim2_raw |> filter(chain %in% sample(unique(sim2_raw$chain), n_sample_chains))
 
 # ------------------------------------------------------------------------
-# 0c. Panel B heatmap data: bin time into the same effective window used
-#     for the rolling-mean smoothing (k=15, see 0a) so the heatmap's time
-#     resolution matches the mean line's, then compute the proportion of
-#     all 200 chains at each symptom count (0-9) within each time bin.
-#     Uses the FULL sim2_raw (all chains), not the 12-chain sample --
-#     the heatmap needs the full distribution to estimate proportions
-#     sensibly, unlike the spaghetti layer which deliberately only shows
-#     a few individual paths.
+# 0c. Panel B heatmap data: bin time into the same window as the
+#     rolling-mean smoothing (k=15) so the heatmap's time resolution
+#     matches the mean line's, then compute the proportion of all 200
+#     chains at each symptom count (0-9) within each time bin. Uses the
+#     full sim2_raw (all chains), not the 12-chain sample -- the heatmap
+#     needs the full distribution, unlike the spaghetti layer.
 # ------------------------------------------------------------------------
 time_bin_width <- 15
 
@@ -129,10 +111,8 @@ p_ylim <- range_pad(
 )
 
 p_ref <- mean(sim2_w$mean_P[sim2_w$time_since_shock < 0], na.rm = TRUE)
-# Note: M_ylim/M_ref (ribbon range + pre-perturbation reference line) are
-# no longer needed -- panel B replaced its ribbon+hline design with the
-# heatmap below, which uses a fixed 0-9 axis (the full possible range of
-# symptom counts) instead.
+# M_ylim/M_ref (ribbon range + pre-perturbation reference line) aren't
+# needed -- panel B uses the heatmap below instead, with a fixed 0-9 axis.
 
 # ------------------------------------------------------------------------
 # 2. Panel A: slow field P_t -- bold mean + light ribbon + a small
@@ -158,14 +138,12 @@ pA <- ggplot(sim2_w, aes(x = time_since_shock, y = mean_P)) +
   theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
 
 # ------------------------------------------------------------------------
-# 3. Panel B: heatmap of the symptom-count DISTRIBUTION over time, with
-#    the bold mean line overlaid. geom_tile is drawn first (its own data/
-#    aes, inherit.aes=FALSE) so it sits behind the mean line. The mean
-#    line is drawn twice -- a thicker white "halo" first, then the actual
-#    dark line on top -- so it stays legible against both the light
-#    (low-proportion) and saturated (high-proportion) ends of the fill
-#    scale, rather than picking one line colour that only contrasts with
-#    part of the heatmap.
+# 3. Panel B: heatmap of the symptom-count distribution over time, with
+#    the bold mean line overlaid. geom_tile is drawn first (own data/aes,
+#    inherit.aes=FALSE) so it sits behind the mean line. The mean line is
+#    drawn twice, a thicker white "halo" then the actual dark line, so it
+#    stays legible against both the light and saturated ends of the fill
+#    scale rather than one colour that only contrasts with part of it.
 # ------------------------------------------------------------------------
 pB <- ggplot(sim2_w, aes(x = time_since_shock, y = mean_M_smooth)) +
   geom_tile(
@@ -194,9 +172,9 @@ pB <- ggplot(sim2_w, aes(x = time_since_shock, y = mean_M_smooth)) +
 
 # ------------------------------------------------------------------------
 # 4. Combine + save -- vertical stack, shared x-axis (perturbation-onset
-#    line lines up visually between panels). Heights slightly unequal
-#    (0.9 : 1.1) -- panel A alone looked a touch too tall relative to B
-#    once B carries the heatmap + its own legend row underneath.
+#    line lines up between panels). Heights slightly unequal (0.9 : 1.1) --
+#    panel A alone looked a touch too tall once B carries the heatmap plus
+#    its own legend row underneath.
 # ------------------------------------------------------------------------
 fig_perturbation_recovery <- pA / pB + plot_layout(heights = c(0.9, 1.1))
 
@@ -207,9 +185,9 @@ ggsave("figs/revision_2026/Figure3_perturbation_recovery.png", fig_perturbation_
 
 cat("Done. Files:\n")
 cat("  figs/revision_2026/Figure3_perturbation_recovery.pdf (+ .png)\n")
-cat("\nNOTE: this is a NEW figure, inserted before the existing Figure 3\n")
-cat("(regimes, fig3_regimes.R / Figure3_regimes.pdf) in document order --\n")
-cat("that figure and Figure 4 (network trio) will renumber automatically\n")
-cat("via LaTeX's \\ref, no manuscript label changes needed beyond adding\n")
-cat("this new figure environment. See chat for the exact LaTeX block and\n")
-cat("Results paragraph to insert in the Simulation 2 section.\n")
+cat("\nThis is a NEW figure, inserted before the existing Figure 3 (regimes,\n")
+cat("fig3_regimes.R / Figure3_regimes.pdf) in document order -- that figure\n")
+cat("and Figure 4 (network trio) renumber automatically via LaTeX's \\ref,\n")
+cat("no manuscript label changes needed beyond adding this figure\n")
+cat("environment. See chat for the LaTeX block and the Results paragraph to\n")
+cat("insert in the Simulation 2 section.\n")

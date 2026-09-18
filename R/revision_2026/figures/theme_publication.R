@@ -4,19 +4,19 @@
 # Shared theme + palette for the four publication figures. Every
 # fig*_publication.R script in this folder should source this file and
 # use theme_pub() rather than theme_classic()/defaults directly, so the
-# four figures read as one coherent set rather than four one-off plots.
+# four figures read as one coherent set instead of four one-off plots.
 #
-# Modeled on the styling actually used in the old Figure 7
-# (R/scripts/13_network_full_check.R's theme_pub(), panel letters, bottom
-# legend, log-scale axis, minimal gridlines) -- reproduced/extended here
-# rather than sourcing that script directly, since it's a protected
-# legacy script tied to the pre-revision manuscript.
+# Modeled on the styling from the old Figure 7 (R/scripts/13_network_full_check.R's
+# theme_pub(): panel letters, bottom legend, log-scale axis, minimal
+# gridlines) -- reproduced/extended here rather than sourcing that script
+# directly, since it's a protected legacy script tied to the pre-revision
+# manuscript.
 #
 # qgraph figures (the network-trio panels) are base-R graphics, not
-# ggplot, so this theme doesn't apply to them directly -- their styling
+# ggplot, so this theme doesn't apply to them directly. Their styling
 # recipe (spring layout fixed from the true network, posCol/negCol,
 # edge.width, vsize, label.cex, theme="classic") is documented inline in
-# fig4_network_trio.R instead, matching the old Figure 8 recipe exactly.
+# fig4_network_trio.R instead, matching the old Figure 8 recipe.
 # ============================================================
 
 suppressPackageStartupMessages({
@@ -24,12 +24,12 @@ suppressPackageStartupMessages({
 })
 
 # ------------------------------------------------------------------------
-# Global final-polish style tokens (locked 2026-08-25 final figure-design
-# pass). Every fig*.R script should reference these rather than hardcoding
-# its own sizes/widths/alphas, so the whole set reads as one consistent
-# journal-style figure family instead of four separately-tuned plots.
-# Individual panels MAY still deviate slightly (e.g. a smaller point size
-# for a very dense panel) but should start from these values.
+# Global style tokens, locked 2026-08-25 final figure-design pass. Every
+# fig*.R script should reference these rather than hardcoding its own
+# sizes/widths/alphas, so the whole set reads as one consistent
+# journal-style figure family. Individual panels may still deviate
+# slightly (e.g. a smaller point size for a dense panel) but should start
+# from these values.
 # ------------------------------------------------------------------------
 base_size_panel_title <- 10.5
 base_size_axis_title  <- 10
@@ -65,8 +65,8 @@ theme_pub <- function(base_size = 12) {
     )
 }
 
-# Panel letters (A), (B), (C)... added as a plot title prefix rather than
-# a separate annotation layer -- keeps each panel self-contained so
+# Panel letters (A), (B), (C)... as a plot title prefix rather than a
+# separate annotation layer, so each panel stays self-contained and
 # patchwork::wrap_plots() doesn't need tag_levels bookkeeping to match.
 panel_title <- function(letter, text) {
   bquote(bold(.(paste0("(", letter, ") "))) * .(text))
@@ -74,9 +74,9 @@ panel_title <- function(letter, text) {
 
 # ------------------------------------------------------------------------
 # Palette -- locked, one set of colors reused across all four figures so
-# the paper reads as one visual identity rather than four separate plots.
-# Restrained (no rainbow/viridis-per-figure), each color tied to one
-# recurring quantity across the whole simulation set.
+# the paper reads as one visual identity. Restrained (no rainbow/viridis-
+# per-figure); each color is tied to one recurring quantity across the
+# whole simulation set.
 # ------------------------------------------------------------------------
 col_P        <- "#3B76AF"   # slow context / P_t
 col_M        <- "#D97A2B"   # symptom burden / M_t or m_t
@@ -98,10 +98,9 @@ pal_feedback <- c(off = col_off, on = col_on)
 # read as the same two conditions everywhere they appear.
 pal_arm      <- c(baseline = col_off, naive = col_naive, adjusted = col_adjusted)
 
-# Network edge colors (qgraph posCol/negCol) -- kept as the original blue
-# used in the already-approved network-trio figure (not tied to col_true,
-# which is a separate "true value reference line" color used in Figure
-# 4's summary panels -- no reason to risk changing a figure that already
-# works to force palette purity here).
+# Network edge colors (qgraph posCol/negCol), kept as the original blue
+# from the already-approved network-trio figure. Not tied to col_true
+# (a separate "true value reference line" color used in Figure 4's
+# summary panels) -- no reason to change a figure that already works.
 qgraph_pos_col <- "#1565C0"
 qgraph_neg_col <- "#C62828"

@@ -2,11 +2,11 @@
 # R/revision_2026/04b_sim_network_estimation_replicated.R
 # ============================================================
 # Replicated version of Simulation 4 (see 04_sim_network_estimation.R for
-# the single-run pilot that established n_person=10000 was needed to get a
+# the single-run pilot that established n_person=10000 was needed for a
 # clean naive/adjusted/baseline separation). This is the version to lock
 # for the manuscript: n_reps independent replicates of the same design, so
-# we can report mean +/- SE across replicates rather than one run, and check
-# that naive - adjusted is consistently positive (not just positive once).
+# we can report mean +/- SE across replicates instead of one run, and check
+# that naive - adjusted is consistently positive, not just positive once.
 #
 # Same design as 04_sim_network_estimation.R, same true network (tau/omega/
 # gamma from 00_parameters_uncentered01.R, unchanged across replicates --
@@ -17,9 +17,8 @@
 #   adjusted -- identical data to naive, estimator conditions on P_i
 #
 # n_person per replicate is lower than the single-run pilot's 10000 (see
-# n_person note below) -- per Kyuri's suggestion, averaging over replicates
-# recovers precision that a single large run would give, without needing
-# n_reps x 10000 people.
+# note below). Averaging over replicates recovers the precision a single
+# large run would give, without needing n_reps x 10000 people.
 #
 # Outputs
 # -------
@@ -47,15 +46,14 @@ source("R/revision_2026/00_parameters_uncentered01.R")  # tau (+1.3 shift), omeg
 # ------------------------------------------------------------------------
 T_burn   <- 200L
 n_reps   <- 30L
-n_person <- 3000L   # per arm, per replicate -- lower than the single-run
-                     # pilot's 10000 because averaging over n_reps=30
-                     # replicates shrinks the SE of the MEAN by ~sqrt(30)
-                     # ~= 5.5x regardless of per-replicate noise; 3000 was
-                     # chosen as a middle ground so the whole replicated run
+n_person <- 10000L   # per arm, per replicate. Averaging over n_reps=30
+                     # replicates shrinks the SE of the mean by ~sqrt(30)
+                     # ~5.5x regardless of per-replicate noise, so 3000 was
+                     # picked as a middle ground so the whole replicated run
                      # doesn't cost 30x what the 10000-person pilot cost.
                      # If replicate-level SEs below come out too wide, raise
-                     # this rather than n_reps (n_reps mainly buys you a
-                     # cleaner mean and a %-positive check, not raw precision).
+                     # this rather than n_reps (n_reps mainly buys a cleaner
+                     # mean and a %-positive check, not raw precision).
 
 P_fixed <- 0
 P_range <- c(-0.6, 0.6)
@@ -78,9 +76,9 @@ simulate_person <- function(P) {
   S
 }
 
-# Sequential (not parallel) person-data generator -- used INSIDE each
-# replicate, since replicates themselves are the parallel unit below.
-# Nesting mclapply inside mclapply is avoided deliberately.
+# Sequential (not parallel) person-data generator, used INSIDE each
+# replicate, since replicates themselves are the parallel unit below --
+# nesting mclapply inside mclapply is avoided deliberately.
 generate_arm_data_seq <- function(Pvec) {
   S <- t(vapply(Pvec, simulate_person, numeric(N)))
   colnames(S) <- symptoms
@@ -88,14 +86,30 @@ generate_arm_data_seq <- function(Pvec) {
 }
 
 arm_metrics <- function(omega_hat) {
-  err <- omega_hat[iu] - true_omega_edges
-  nz <- true_omega_edges != 0
+  est <- omega_hat[iu]
+  err <- est - true_omega_edges
+  nz  <- true_omega_edges != 0
+
   tibble(
-    global_strength_est = sum(abs(omega_hat[iu])),
+    # Conventional global strength, kept as a diagnostic but not used as
+    # the primary recovery metric.
+    global_strength_est = sum(abs(est)),
+
+    # Primary recovery metric: all generating couplings are positive, so
+    # signed sampling error around true-zero edges can cancel.
+    total_coupling_est = sum(est),
+
+    # Decompose the absolute-strength statistic
+    abs_strength_true_edges = sum(abs(est[nz])),
+    spurious_abs_coupling   = sum(abs(est[!nz])),
+
+    # Recovery diagnostics
     mae_all = mean(abs(err)),
     mae_true_nonzero = mean(abs(err[nz])),
     mae_true_zero = mean(abs(err[!nz])),
-    n_phantom_edges_gt_01 = sum(!nz & abs(omega_hat[iu]) > 0.1)
+
+    # Thresholded metric, kept for supplementary/diagnostic use
+    n_phantom_edges_gt_01 = sum(!nz & abs(est) > 0.1)
   )
 }
 
@@ -124,11 +138,28 @@ run_replicate <- function(rep_id) {
   m_adj   <- arm_metrics(omega_hat_adjusted)
   diff_row <- tibble(
     rep = rep_id,
-    diff_global_strength = m_naive$global_strength_est - m_adj$global_strength_est,
-    diff_mae_all = m_naive$mae_all - m_adj$mae_all,
-    diff_mae_true_zero = m_naive$mae_true_zero - m_adj$mae_true_zero,
-    diff_mae_true_nonzero = m_naive$mae_true_nonzero - m_adj$mae_true_nonzero,
-    diff_phantom = m_naive$n_phantom_edges_gt_01 - m_adj$n_phantom_edges_gt_01
+
+    diff_total_coupling =
+      m_naive$total_coupling_est - m_adj$total_coupling_est,
+
+    diff_spurious_abs_coupling =
+      m_naive$spurious_abs_coupling - m_adj$spurious_abs_coupling,
+
+    # Kept for diagnostics
+    diff_global_strength =
+      m_naive$global_strength_est - m_adj$global_strength_est,
+
+    diff_mae_all =
+      m_naive$mae_all - m_adj$mae_all,
+
+    diff_mae_true_zero =
+      m_naive$mae_true_zero - m_adj$mae_true_zero,
+
+    diff_mae_true_nonzero =
+      m_naive$mae_true_nonzero - m_adj$mae_true_nonzero,
+
+    diff_phantom =
+      m_naive$n_phantom_edges_gt_01 - m_adj$n_phantom_edges_gt_01
   )
 
   list(by_arm = by_arm, diff_row = diff_row)
@@ -136,7 +167,7 @@ run_replicate <- function(rep_id) {
 
 # ------------------------------------------------------------------------
 # Run all replicates in parallel (replicates are the parallel unit; person
-# simulation within each replicate runs sequentially -- see note above).
+# simulation within each replicate runs sequentially, see note above).
 # ------------------------------------------------------------------------
 n_cores <- max(1, parallel::detectCores(logical = TRUE) - 1, na.rm = TRUE)
 cat(sprintf("Using %d cores for %d replicates (n_person=%d per arm per replicate)...\n",
@@ -171,16 +202,41 @@ se <- function(x) sd(x) / sqrt(length(x))
 
 summary_by_arm <- by_arm_all |>
   group_by(arm) |>
-  summarise(across(c(global_strength_est, mae_all, mae_true_nonzero, mae_true_zero, n_phantom_edges_gt_01),
-                    list(mean = mean, se = se), .names = "{.col}_{.fn}"),
-            .groups = "drop")
+  summarise(
+    across(
+      c(
+        global_strength_est,
+        total_coupling_est,
+        abs_strength_true_edges,
+        spurious_abs_coupling,
+        mae_all,
+        mae_true_nonzero,
+        mae_true_zero,
+        n_phantom_edges_gt_01
+      ),
+      list(mean = mean, se = se),
+      .names = "{.col}_{.fn}"
+    ),
+    .groups = "drop"
+  )
 write.csv(summary_by_arm, "res/revision_2026/sim4/sim4_replicated_summary_by_arm.csv", row.names = FALSE)
 
 summary_diff <- diff_all |>
   summarise(across(starts_with("diff_"), list(mean = mean, se = se), .names = "{.col}_{.fn}")) |>
   mutate(
-    pct_reps_naive_gt_adjusted_gs  = mean(diff_all$diff_global_strength > 0) * 100,
-    pct_reps_naive_gt_adjusted_mtz = mean(diff_all$diff_mae_true_zero > 0) * 100,
+    pct_reps_naive_gt_adjusted_total =
+      mean(diff_all$diff_total_coupling > 0) * 100,
+
+    pct_reps_naive_gt_adjusted_spurious =
+      mean(diff_all$diff_spurious_abs_coupling > 0) * 100,
+
+    # older diagnostics, kept
+    pct_reps_naive_gt_adjusted_gs =
+      mean(diff_all$diff_global_strength > 0) * 100,
+
+    pct_reps_naive_gt_adjusted_mtz =
+      mean(diff_all$diff_mae_true_zero > 0) * 100,
+
     n_reps = n_reps
   )
 write.csv(summary_diff, "res/revision_2026/sim4/sim4_replicated_summary_diff.csv", row.names = FALSE)
@@ -191,13 +247,13 @@ print(summary_by_arm)
 cat("\n=== NAIVE - ADJUSTED PAIRED DIFFERENCE (mean +/- SE across", n_reps, "replicates) ===\n")
 print(summary_diff)
 
-cat("\nCheck: pct_reps_naive_gt_adjusted_gs and _mtz should be high (ideally\n")
-cat("close to 100) -- this is the direct answer to 'is naive > adjusted\n")
-cat("consistently, or just in one lucky/unlucky run'. If clearly >50% and the\n")
-cat("mean diff is many SEs from zero, Simulation 4 is locked per Kyuri's\n")
-cat("criterion. If it's closer to 50%, the confounding effect is not robust\n")
-cat("at this n_person/P_range and needs a stronger design (more n_person,\n")
-cat("wider P_range), not just more replicates.\n")
+cat("\npct_reps_naive_gt_adjusted_gs and _mtz should be high (ideally close to\n")
+cat("100) -- that's the direct answer to 'is naive > adjusted consistently,\n")
+cat("or just in one lucky/unlucky run'. If clearly >50% and the mean diff is\n")
+cat("many SEs from zero, I'm calling Simulation 4 locked. If\n")
+cat("it's closer to 50%, the confounding effect isn't robust at this\n")
+cat("n_person/P_range and needs a stronger design (more n_person, wider\n")
+cat("P_range), not just more replicates.\n")
 
 # ------------------------------------------------------------------------
 # Figure: per-replicate naive-adjusted gap (global strength, mae_true_zero)

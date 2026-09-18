@@ -3,7 +3,7 @@
 # ============================================================
 # Simulation 1: same tau_i, omega_ij, gamma_i; only P differs.
 # No slow diffusion, shocks, feedback, heatmaps, or network estimation --
-# those come later (02_sim_stress_recovery.R onward), once this is
+# those come later (02_sim_stress_recovery.R onward), once this one is
 # checked clean per Step 6 of the revision plan.
 #
 # Outputs
@@ -29,15 +29,15 @@ P_values <- c(low = -0.6, middle = 0, high = 0.6)
 
 # Pilot defaults -- adjust per Step 6 if the burden distribution saturates.
 # Per the revision plan: if it saturates, adjust ONLY P values / tau /
-# omega strength / gamma strength. Do not change simulate_fast_sweep()
+# omega strength / gamma strength. Do not touch simulate_fast_sweep()
 # itself -- that's the one shared model definition every script relies on.
 T_burn   <- 200L
 T_post   <- 200L
 n_chains <- 200L
 
-n_trace_chains <- 10L  # how many chains to keep a full (burn-in + post) trace for,
-                        # purely for the convergence check below -- not used in
-                        # any summary statistic.
+n_trace_chains <- 10L  # how many chains to keep a full (burn-in + post) trace
+                        # for, purely for the convergence check below -- not
+                        # used in any summary statistic.
 
 run_condition <- function(P, n_chains, T_burn, T_post) {
   total_sweeps <- T_burn + T_post

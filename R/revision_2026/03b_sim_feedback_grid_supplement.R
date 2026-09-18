@@ -1,21 +1,21 @@
 # ============================================================
 # R/revision_2026/03b_sim_feedback_grid_supplement.R
 # ============================================================
-# Supplement to Simulation 3: the b calibration grid used to pick the main-
-# text feedback value. Same design as 03_sim_feedback.R (same shock/recovery
-# setup as Simulation 2, signed feedback term b*(m_smooth - m_star)*dt --
-# see 03_sim_feedback.R's 2026-08-27 note), but sweeps b across
-# off/mild/medium/strong instead of just off vs on.
+# Supplement to Simulation 3: the b calibration grid used to pick the
+# main-text feedback value. Same design as 03_sim_feedback.R (same
+# shock/recovery setup as Sim 2, signed feedback term
+# b*(m_smooth - m_star)*dt -- see 03_sim_feedback.R's 2026-08-27 note),
+# but sweeps b across off/mild/medium/strong instead of just off vs on.
 #
-# This is NOT the main-text simulation. b=0.5 ("medium") was selected from
-# this grid as the main-text value because it produced a visible feedback
-# effect in both P and symptom burden while all four conditions continued to
-# decay toward baseline (checked explicitly below and in the original
-# calibration run: comparing steps 700-724 vs 725-749 within the post-shock
-# window showed every condition, including "strong", still declining, not
-# plateaued). b=0.3 alone was too subtle in symptom burden; b=0.7 gave the
-# largest separation but risks reading as tipping-like even though it isn't.
-# See 03_sim_feedback.R for the locked main-text off-vs-on(b=0.5) comparison.
+# NOT the main-text simulation. b=0.5 ("medium") was picked from this grid
+# because it produced a visible feedback effect in both P and symptom
+# burden while all four conditions still decayed toward baseline (checked
+# below, and in the original calibration run: steps 700-724 vs 725-749 in
+# the post-shock window, every condition including "strong" was still
+# declining, not plateaued). b=0.3 alone was too subtle in symptom burden;
+# b=0.7 gave the largest separation but risks reading as tipping-like even
+# though it isn't. See 03_sim_feedback.R for the locked off-vs-on(b=0.5)
+# comparison.
 #
 # Outputs
 # -------
@@ -171,8 +171,8 @@ print(summary_tbl |>
         group_by(feedback, half) |>
         summarise(mean_P = mean(mean_P), mean_M = mean(mean_M), .groups = "drop") |>
         pivot_wider(names_from = half, values_from = c(mean_P, mean_M)))
-cat("Each condition's second_half should be <= first_half (still decaying, not\n")
-cat("plateaued/runaway) -- this is what rules out bistability/hysteresis here.\n")
+cat("Each condition's second_half should be <= first_half (still decaying,\n")
+cat("not plateaued/runaway) -- rules out bistability/hysteresis here.\n")
 
 # ------------------------------------------------------------------------
 # Figure: P_t / m_t trajectories across the full b grid

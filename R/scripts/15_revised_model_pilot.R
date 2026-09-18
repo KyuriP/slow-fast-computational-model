@@ -8,7 +8,7 @@
 #   logit Pr(S_i = 1 | S_-i, P) = tau_i + sum_j!=i omega_ij S_j + gamma_i P
 #
 # No beta. No J(m - 1/2). No shared threshold. This replaces the mean-field
-# Curie-Weiss fast layer as the paper's core model, per Denny's feedback.
+# Curie-Weiss fast layer as the paper's core model.
 #
 # Unlike 13_network_full_check.R, P is NOT a time-evolving SDE here -- Sims
 # 1-3 treat P as a per-person draw (or fixed per-group constant), so there is
@@ -41,18 +41,17 @@ suppressPackageStartupMessages(library(matrixStats))
 # 0. Design -- see Simulation_Spec_Sims1-3_2026-08.md "Pilot grid" section
 # ------------------------------------------------------------------------
 # N = 12 for now (reuses the exact-enumeration approach cheaply: 2^12 =
-# 4096 states). Switch to 14 later only if you want an exact match to
-# Cramer et al. (2016)'s symptom count -- flagged as an open decision, not
-# assumed here.
+# 4096 states). Staying with a small hand-picked symptom set rather than
+# the full Cramer et al. (2016) item count -- decided against trying to
+# match their real fit exactly, see 00_parameters_uncentered01.R.
 N            <- 12L
 edge_density <- 0.40                 # midpoint of the 0.30-0.50 range in the spec
 
-# tau_i (per-symptom threshold): placeholder range per the spec, pending
-# real Cramer et al. (2016) values (task: ask Denny for the fitted VATSPUD
-# thresholds -- not machine-readable from the PLOS page, only shown as a
-# figure). Uniform(-3.0, -1.0) reflects the qualitative pattern the paper
-# describes (rare symptoms like thoughts of death get much more negative
-# thresholds than common ones like fatigue), not the literal fitted values.
+# tau_i (per-symptom threshold): theoretical range per the spec, not
+# fit to data. Uniform(-3.0, -1.0) reflects the qualitative pattern the
+# paper describes (rare symptoms like thoughts of death get much more
+# negative thresholds than common ones like fatigue), not literal fitted
+# values from any dataset.
 tau_lo <- -3.0
 tau_hi <- -1.0
 
@@ -131,8 +130,8 @@ build_dgp <- function(dgp_seed) {
 # 2. Estimator -- identical to fit_edges() in 13_network_full_check.R.
 #    Nodewise logistic regression (base R glm(family = binomial())),
 #    symmetrized by averaging directed coefficients. Named explicitly here
-#    (and in the Methods text) per Denny's "what estimator/software"
-#    comment.
+#    (and in the Methods text) since reviewers will want to know exactly
+#    which estimator/software was used.
 # ------------------------------------------------------------------------
 fit_edges <- function(S, Pvec = NULL) {
   beta <- matrix(0, N, N)

@@ -4,15 +4,12 @@
 # Figure 2: same symptom-symptom coupling, different slow context,
 # different symptom burden.
 #
-# REBUILT as a two-panel figure. The 3-panel version (schematic + PMF +
-# summary) was cut for the same reason as Figure 4's original summary
-# panel: it tried to do too many jobs (illustrate the fixed network,
-# show the distribution, show the summary) and read as an "analysis
-# report panel" rather than a single clean visual claim. The fixed
-# network is now stated in the caption/Methods instead of drawn as a
-# schematic -- a placeholder 7-node cartoon risked implying a wrong N
-# anyway (flagged in an earlier round), so dropping it removes both the
-# clutter and that accuracy risk at once.
+# Rebuilt as a two-panel figure. The old 3-panel version (schematic + PMF
+# + summary) tried to do too many jobs at once and read as an "analysis
+# report panel" rather than one clean visual claim. The fixed network is
+# now stated in the caption/Methods instead of drawn as a schematic -- a
+# placeholder 7-node cartoon risked implying the wrong N anyway, so
+# dropping it removes both the clutter and that accuracy risk.
 #
 #   (A) Burden distributions, wider, no legend -- lines labeled directly
 #       at their right end (Low / Middle / High context).
@@ -23,11 +20,11 @@
 #   - sim1_raw.rds is a LIST (burden / symptom_activation / params /
 #     design), not a flat data frame -- the burden table is at $burden.
 #   - burden columns are: condition, P, chain, sweep, M, m (m = M/N).
-#   - There is no valid precomputed SE in sim1_summary.csv (sd_M there is
+#   - There's no valid precomputed SE in sim1_summary.csv (sd_M there is
 #     sweep-level, and sequential Gibbs sweeps within a chain are
-#     autocorrelated -- treating all 200 chains x 200 sweeps as
+#     autocorrelated, so treating all 200 chains x 200 sweeps as
 #     independent understates the true SE). Panel B recomputes SE
-#     properly from per-CHAIN means (200 independent chains).
+#     properly from per-chain means (200 independent chains).
 #
 # Outputs
 # -------
@@ -57,24 +54,22 @@ burden_show <- burden |>
   mutate(P_group = factor(condition_labels[as.character(condition)],
                            levels = unname(condition_labels[c("low", "middle", "high")])))
 
-# Named palette keyed to the DISPLAY labels (pal_context from
-# theme_publication.R is keyed to low/middle/high; ggplot's scale needs
-# the labels actually used in the data).
+# Palette keyed to the DISPLAY labels (pal_context from theme_publication.R
+# is keyed to low/middle/high; ggplot's scale needs the labels actually
+# used in the data).
 pal_context_display <- setNames(pal_context, condition_labels[names(pal_context)])
 
 # ------------------------------------------------------------------------
 # 2. Panel A: burden distributions (probability-mass line/point plot --
-#    M is a discrete 0-9 count, not continuous, so this stays a PMF plot
-#    rather than a density). No legend -- each line is labeled directly,
-#    so the reader doesn't have to cross-reference a legend key.
+#    M is a discrete 0-9 count, not continuous, so this is a PMF plot, not
+#    a density). No legend -- each line is labeled directly.
 #
-#    Labels are placed at each curve's own PEAK, not at a shared x
-#    position (e.g. the right end, M=9) -- all three distributions
-#    converge to ~0% by M=9, so a right-edge label collided all three
-#    text strings on top of each other there. The peaks sit at different
-#    M values (low~1, middle~2, high~3-4) and are naturally well
-#    separated vertically, so labeling there is both readable and a more
-#    informative anchor than the flat right tail.
+#    Labels sit at each curve's own PEAK rather than a shared x position
+#    (e.g. the right end, M=9): all three distributions converge to ~0% by
+#    M=9, so a right-edge label collided all three text strings together.
+#    The peaks (low~1, middle~2, high~3-4) are naturally well separated
+#    vertically, so labeling there is both readable and a more informative
+#    anchor than the flat right tail.
 # ------------------------------------------------------------------------
 prop_tbl <- burden_show |>
   count(P_group, M, name = "n") |>
@@ -91,11 +86,10 @@ peak_labels <- prop_tbl |>
 pA <- ggplot(prop_tbl, aes(x = M, y = prop, colour = P_group, group = P_group)) +
   geom_line(linewidth = 0.85) +
   geom_point(size = 2.3) +
-  # geom_label (not geom_text): the three curves cross each other near
-  # each peak, so plain text sat directly on top of a differently-colored
-  # line behind it and read as "crossed with the graph." A borderless,
-  # semi-opaque white label punches a clean halo behind the text so it
-  # stays legible regardless of what's plotted underneath.
+  # geom_label, not geom_text: the three curves cross near each peak, so
+  # plain text sitting on a differently-colored line read as "crossed with
+  # the graph." A borderless, semi-opaque white label punches a clean halo
+  # behind the text so it stays legible regardless of what's underneath.
   geom_label(
     data = peak_labels,
     aes(x = M, y = prop, label = P_group),
@@ -107,19 +101,16 @@ pA <- ggplot(prop_tbl, aes(x = M, y = prop, colour = P_group, group = P_group)) 
   scale_x_continuous(breaks = 0:9, expand = expansion(mult = c(0.02, 0.04))) +
   scale_y_continuous(labels = percent_format(accuracy = 1), expand = expansion(mult = c(0.02, 0.11))) +
   # y-axis relabeled "Probability" -> "Proportion" (2026-08-27): these bar
-  # heights are the observed proportion of post-burn-in simulated states at
-  # each symptom count, not an analytically derived probability -- matches
-  # the "proportion" phrasing now used in the prose and in panel B's column
-  # header.
+  # heights are the observed proportion of post-burn-in simulated states,
+  # not an analytically derived probability -- matches "proportion" in the
+  # prose and in panel B's column header.
   labs(title = panel_title("A", "Context level shifts symptom activation"),
        x = "Number of active symptoms", y = "Proportion") +
   theme_pub(base_size = 10.5) +
-  # Right margin trimmed (theme_pub's default is 14pt) -- combined with
-  # panel B's own trimmed left margin below, this closes up the visible
-  # gap between A and B. Axis text/title and title sizes bumped locally
-  # (theme_pub()'s versions are fixed global constants) since the panel
-  # read as generally too small; matches the same local-override bump
-  # applied to panel B.
+  # Right margin trimmed (theme_pub's default is 14pt) to close up the gap
+  # to panel B (which trims its own left margin below). Axis text/title and
+  # title sizes bumped locally since the panel read as too small at the
+  # shared defaults; same bump applied to panel B.
   theme(
     plot.margin = margin(10, 4, 10, 10),
     axis.text = element_text(size = 10.5),
@@ -130,10 +121,8 @@ pA <- ggplot(prop_tbl, aes(x = M, y = prop, colour = P_group, group = P_group)) 
 # ------------------------------------------------------------------------
 # 3. Panel B: compact summary contrast. Mean burden as point + 95%
 #    interval (per-chain SE, not sweep-level), high-burden probability as
-#    a short text label. Tightened relative to the earlier version: less
-#    horizontal travel between the point, its mean label, and the Pr(M>=5)
-#    label, so the panel reads as one compact strip instead of a row of
-#    scattered text.
+#    a short text label. Tightened relative to the earlier version so it
+#    reads as one compact strip instead of a row of scattered text.
 # ------------------------------------------------------------------------
 chain_summary <- burden_show |>
   group_by(condition, P, P_group, chain) |>
@@ -158,51 +147,31 @@ summ_corrected <- chain_summary |>
       levels = rev(unname(condition_labels[c("low", "middle", "high")]))
     ),
     mean_label = sprintf("%.2f", mean_M),
-    # "≥5" (>=5) rather than "5+", to match the proportion-language
-    # phrasing used in the prose/column header below rather than
-    # probability notation (Pr(...)) -- see 2026-08-27 relabeling note.
+    # "≥5" rather than "5+", matching the proportion-language phrasing
+    # used in the prose/column header (see the 2026-08-27 relabeling note
+    # above) rather than probability notation.
     high_label = sprintf("≥5 active: %.0f%%", 100 * pr_high)
   )
 
-# CORRECTED after checking the rendered PNG (2026-08-25): the fixed
-# label_x=3.95 / x_axis_max=4.55 tried above clipped the label text mid-
-# word ("5+ activ") on every row, and on High context (mean_M=3.56) the
-# label collided directly with the "3.56" mean-value text -- fixed limits
-# don't adapt to the actual data, and scale_x_continuous(limits=...)
-# hard-clips anything (including text) past the edge, so a too-narrow
-# guess doesn't just look cramped, it silently truncates the label.
-# Back to a DATA-DRIVEN position/limit, like the earlier working version,
-# but keeping the new shorter "5+ active: %" text:
-#   - label_x sits a fixed gap past the widest mean_label, so it can never
-#     collide with a mean_M value no matter which condition is largest
-#   - x_axis_max leaves generous room (not just enough for the shortest
-#     label) for the longest label text ("5+ active: 100%" case)
-# Check the rendered PNG again after rerunning -- if it still clips,
-# widen the multiplier below rather than shrinking the text.
+# Label placement is data-driven rather than fixed: a fixed x-position
+# tried earlier clipped label text mid-word on every row and, on High
+# context, collided with the mean-value text -- scale_x_continuous(limits=...)
+# hard-clips anything past the edge, so a too-narrow guess doesn't just
+# look cramped, it silently truncates the label. label_x now sits a fixed
+# gap past the widest mean_label (so it can't collide with any mean_M
+# value), and x_axis_max leaves room for the longest label text
+# ("≥5 active: 100%"). Check the rendered PNG after rerunning if it clips
+# again; widen the multiplier rather than shrinking the text.
 label_x <- max(summ_corrected$mean_M) + 0.95
 x_axis_max <- label_x + 2.3
 sep_x   <- max(summ_corrected$mean_M) + 0.62   # light divider between the
                                                 # mean-value column and the
                                                 # Pr(5+ active) column
 
-# The x-SCALE genuinely runs to x_axis_max (kept, proven not to clip the
-# label text -- see the 2026-08-25 fix note above), but only breaks/ticks
-# 0:4 are drawn, so the space past 4 was unlabeled and read as "why does
-# the axis just stop at 4." Rather than change the scale mechanics again,
-# the fix here is to stop leaving that region unexplained: a light
-# separator plus explicit "Proportion ≥5 active" column header now marks
-# it as a deliberate second field, not a truncated axis.
-#
-# 2026-08-27: header text changed from "Pr(5+ active)" to "Proportion
-# ≥5 active" -- since this quantity is reported as a simulated
-# proportion of post-burn-in states, not an analytically derived
-# probability, "proportion" is the more transparent/accurate term (matches
-# the corresponding prose wording). Header string is ~7 characters longer
-# than before; the per-row labels below ("≥5 active: 100%", 16
-# chars, size 3.5) already fit in the same x_axis_max headroom at a larger
-# font size than this header (size 3.0), so it should still clear the
-# panel edge, but check the rendered PNG after rerunning to confirm it
-# isn't clipped.
+# The x-scale runs to x_axis_max, but only breaks/ticks 0:4 are drawn, so
+# the space past 4 needs its own explanation rather than looking like a
+# truncated axis: a light separator plus an explicit "Proportion ≥5
+# active" column header marks it as a deliberate second field.
 n_grp <- nlevels(summ_corrected$P_group)
 
 pB <- ggplot(summ_corrected, aes(y = P_group, x = mean_M, colour = P_group)) +
@@ -221,10 +190,6 @@ pB <- ggplot(summ_corrected, aes(y = P_group, x = mean_M, colour = P_group)) +
     linewidth = 0.75
   ) +
   geom_point(size = 3.2) +
-  # Offset widened (was mean_M + 0.10, size 3.0) -- at the larger point
-  # size below, 0.10 wasn't enough clearance and the mean-value text
-  # (e.g. "3.56") visually ran into/behind the point marker itself. Text
-  # also enlarged along with everything else in this panel.
   geom_text(
     aes(x = mean_M + 0.18, label = mean_label),
     hjust = 0,
@@ -238,10 +203,10 @@ pB <- ggplot(summ_corrected, aes(y = P_group, x = mean_M, colour = P_group)) +
     size = 3.5,
     colour = "grey35"
   ) +
-  # Column headers, drawn once (not per-row) just above the top data row --
-  # these are what actually answer "what does panel B mean": the left
-  # column is the mean +/- 95% CI, the right column is a separate quantity
-  # (probability of high activation), not a continuation of the same axis.
+  # Column headers, drawn once (not per-row) above the top data row -- this
+  # is what actually tells the reader what panel B means: left column is
+  # mean +/- 95% CI, right column is a separate quantity (probability of
+  # high activation), not a continuation of the same axis.
   annotate("text", x = 0.15, y = n_grp + 0.62,
            label = "Mean (95% CI)", hjust = 0, size = 3.0, colour = "grey35",
            fontface = "italic") +
@@ -261,12 +226,9 @@ pB <- ggplot(summ_corrected, aes(y = P_group, x = mean_M, colour = P_group)) +
     y = NULL
   ) +
   theme_pub(base_size = 10.5) +
-  # theme_pub()'s axis.text/axis.title sizes are fixed GLOBAL constants
-  # (base_size_axis_text=9, base_size_axis_title=10, from
-  # theme_publication.R) regardless of the base_size argument passed in --
-  # bumped locally here since the panel read as generally too small,
-  # without touching those shared constants (Figure 3 relies on them at
-  # their current size).
+  # theme_pub()'s axis.text/axis.title sizes are fixed global constants
+  # regardless of base_size, so bump them locally here (panel read as too
+  # small otherwise) without touching the shared constants Figure 3 relies on.
   theme(
     panel.grid.major.y = element_blank(),
     axis.text.y = element_text(size = 11, colour = "black"),
@@ -277,14 +239,8 @@ pB <- ggplot(summ_corrected, aes(y = P_group, x = mean_M, colour = P_group)) +
   )
 
 # ------------------------------------------------------------------------
-# 4. Combine + save -- A wider (it's the main visual claim), B narrower
-#    and treated as compact numeric support, not a co-equal panel.
-#
-# 2026-08-25: narrowing B's share (to 1.65:0.85) to close the "A and B look
-# far apart" gap made B read as squished instead -- reverted to an even
-# 1:1 split per review. The gap-closing fix that actually mattered was the
-# margin trim above (A's right margin, B's left margin); the width-ratio
-# change was a second lever that overcorrected in the other direction.
+# 4. Combine + save -- A wider (it's the main visual claim), B narrower,
+#    treated as compact numeric support rather than a co-equal panel.
 # ------------------------------------------------------------------------
 fig2 <- pA + pB + plot_layout(widths = c(1, 1))
 

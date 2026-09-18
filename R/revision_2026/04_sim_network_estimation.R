@@ -2,7 +2,7 @@
 # R/revision_2026/04_sim_network_estimation.R
 # ============================================================
 # Simulation 4: does pooling cross-sectional data across different context
-# (P) levels -- without conditioning on P -- make the ESTIMATED symptom
+# (P) levels, without conditioning on P, make the ESTIMATED symptom
 # network look more strongly coupled than the TRUE generative network,
 # purely because every symptom shares the same confounder (each moves with
 # P via its own gamma_i)? This is the paper's central claim made concrete
@@ -19,29 +19,28 @@
 #
 # Three arms, same n_person and T_burn throughout so only the design
 # differs between them:
-#   baseline -- single context: every person simulated at the same fixed
-#               P=0 (Sim 1's middle condition). No context variance, so no
-#               confounding is possible here by construction. This isolates
-#               ordinary finite-sample estimation error as a reference point
-#               for what the naive/adjusted arms should be compared against.
+#   baseline -- single context: everyone simulated at the same fixed P=0
+#               (Sim 1's middle condition). No context variance, so no
+#               confounding is possible by construction. Isolates ordinary
+#               finite-sample estimation error as a reference point for
+#               what the naive/adjusted arms should be compared against.
 #   naive    -- pooled, no adjustment: each person has their own P_i drawn
 #               from Uniform(-0.6, 0.6) (Sim 1's low/high range), but the
-#               estimator (fit_edges with Pvec=NULL) does not use P_i at
-#               all -- as if the analyst pooled data across contexts without
-#               having measured or modeled them.
+#               estimator (fit_edges with Pvec=NULL) doesn't use P_i at
+#               all -- as if the analyst pooled data across contexts
+#               without having measured or modeled them.
 #   adjusted -- pooled, context-adjusted: identical data to "naive" (same
 #               P_i draws, same seed), but fit_edges is given Pvec so each
 #               nodewise regression conditions on P_i.
 #
-# Prediction: naive should show inflated apparent connectivity (edges that
-# are truly zero come out systematically nonzero, and true edges may be
-# over- or under-estimated) relative to both baseline and adjusted; adjusted
-# should look close to baseline, showing the inflation in "naive" is a
-# confounding artifact of pooling over unmodeled context, not an estimation
-# artifact of the regression itself.
+# Prediction: naive should show inflated apparent connectivity (truly-zero
+# edges coming out nonzero, true edges over- or under-estimated) relative
+# to both baseline and adjusted; adjusted should look close to baseline,
+# showing the inflation in "naive" is a confounding artifact of pooling
+# over unmodeled context, not an artifact of the regression itself.
 #
-# n_person, T_burn, and the P_i spread are PILOT VALUES -- calibrate against
-# output like Sim 1's tau shift and Sim 3's b grid.
+# n_person, T_burn, and the P_i spread are PILOT VALUES -- calibrate
+# against output, same as Sim 1's tau shift and Sim 3's b grid.
 #
 # Outputs
 # -------
@@ -69,16 +68,16 @@ source("R/revision_2026/00_parameters_uncentered01.R")  # tau (+1.3 shift), omeg
 # ------------------------------------------------------------------------
 T_burn    <- 200L    # same validated burn-in as Sim 1 (one fast sweep per
                       # step; each person's chain starts from a random state)
-n_person  <- 10000L   # raised from 2000 -- at 2000, unregularized nodewise
+n_person  <- 10000L   # raised from 2000: at 2000, unregularized nodewise
                       # logistic regression (no L1/EBIC shrinkage, several
                       # low-base-rate symptoms like suicidal ~7.5%) had a
-                      # high noise floor: even the baseline arm (P fixed,
+                      # high noise floor -- even the baseline arm (P fixed,
                       # zero confounding possible) showed global strength
                       # 6.50 vs true 3.05, almost as inflated as naive's
                       # 7.01, burying the naive-vs-adjusted confounding
                       # signal under generic estimation noise. 10000 people
                       # is cheap here (each person is just T_burn sweeps,
-                      # no trajectory) and run in parallel below, so raise
+                      # no trajectory) and runs in parallel below, so raise
                       # n rather than add regularization for now.
 
 P_fixed    <- 0          # baseline arm: everyone simulated at this P
@@ -194,7 +193,7 @@ cat("mae_true_zero (spurious nonzero edges among truly-zero pairs) relative\n")
 cat("to both baseline and adjusted, that's the confounding effect this\n")
 cat("simulation is designed to show. If 'naive' looks similar to 'baseline'/\n")
 cat("'adjusted', the P_range spread may be too small to generate visible\n")
-cat("confounding -- widen P_range and rerun. If 'adjusted' does not track\n")
+cat("confounding -- widen P_range and rerun. If 'adjusted' doesn't track\n")
 cat("'baseline' closely, something is wrong with the P-conditioning itself\n")
 cat("(not just a calibration issue).\n")
 

@@ -1,9 +1,9 @@
 # ============================================================
 # R/revision_2026/02_sim_stress_recovery.R
 # ============================================================
-# Simulation 2: introduce P_t dynamics (mean reversion + diffusion +
-# a single acute shock). Feedback is OFF (b = 0) -- this shows stress and
-# recovery cleanly before Simulation 3 adds symptom-to-context feedback.
+# Simulation 2: introduce P_t dynamics (mean reversion + diffusion + a
+# single acute shock). Feedback is OFF (b=0) -- shows stress and recovery
+# cleanly before Simulation 3 adds symptom-to-context feedback.
 #
 # Model (per Step 7):
 #   P_{t+dt} = P_t + kappa*(P_base - P_t)*dt + sigma_P*sqrt(dt)*eps_t
@@ -12,11 +12,11 @@
 # Fast layer unchanged from Simulation 1:
 #   logit Pr(S_i=1 | S_-i, P_t) = tau_i + sum_j!=i omega_ij S_j + gamma_i P_t
 #
-# At the shock step, the perturbation is applied first. Symptoms are then
-# updated conditional on the perturbed P_t. After recording, P_t recovers
-# toward baseline for the next step. Burn-in (200 steps, same as the
-# validated Sim 1 burn-in) lets the fast layer mix before the shock is
-# applied; P_base = 0 so there's no separate slow-state burn-in needed.
+# At the shock step, the perturbation is applied first, then symptoms
+# update conditional on the perturbed P_t, then P_t recovers toward
+# baseline for the next step. Burn-in (200 steps, same as the validated
+# Sim 1 burn-in) lets the fast layer mix before the shock hits; P_base=0
+# so there's no separate slow-state burn-in needed.
 #
 # Outputs
 # -------
@@ -44,7 +44,7 @@ P_base  <- 0      # "middle" baseline, matching Sim 1's middle condition
 b       <- 0      # feedback OFF for this simulation -- Sim 3 turns this on
 
 burn_in_steps    <- 200L   # fast-layer mixing only (validated in Sim 1); P starts at P_base
-post_shock_steps <- 750L   # long enough to see substantial (~95%) recovery: exp(-kappa*post_shock_steps*dt) ~ 0.05
+post_shock_steps <- 750L   # long enough to see ~95% recovery: exp(-kappa*post_shock_steps*dt) ~ 0.05
 shock_time    <- burn_in_steps + 1L
 shock_magnitude <- 1.0     # single deterministic jump added to P at shock_time
 
