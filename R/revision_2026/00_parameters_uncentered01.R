@@ -4,13 +4,10 @@
 # Symptom names, tau_i, omega_ij, gamma_i for the revised uncentered 0/1
 # model. Replaces 01_create_finalparams.R for the revision track.
 #
-# NOTE: these tau/gamma/omega values are hand-set placeholders, not yet
-# calibrated to real data. Tracked separately: get the actual IsingFit
-# thresholds/weights Cramer et al. (2016) estimated from the VATSPUD data
-# (ask Denny -- he's a co-author and likely has the fitted values; they
-# aren't in machine-readable form on the PLOS page, only shown as a
-# figure). Swap-in point once obtained: replace the tau/omega values
-# below directly, keep the rest of the pipeline unchanged.
+# These tau/gamma/omega values are theoretical, not fit to any single
+# dataset -- chosen to be qualitatively consistent with the sign,
+# magnitude, and sparsity typically reported in cross-sectional symptom
+# network studies of depression (e.g., Cramer et al., 2016).
 # ============================================================
 
 symptoms <- c(

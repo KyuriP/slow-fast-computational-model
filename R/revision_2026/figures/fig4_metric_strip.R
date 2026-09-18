@@ -10,26 +10,24 @@
 #   F number of apparent edges (|omega_hat|>0.10) among truly absent edges
 #
 # Replaces fig4_summary_panels.R as the quantitative half of Figure 4.
-# That earlier version tried to do three jobs in one figure (design
-# schematic + summary stats + replicate-level robustness check), which is
-# why it read as sparse/unfocused no matter how the individual panels
-# were polished. This version keeps only the two panels that belong in
-# the main text:
-#   - the design-schematic panel (old panel A) moves to the caption/
-#     Methods instead of taking up figure space
+# That earlier version tried to do three jobs (design schematic + summary
+# stats + replicate-level robustness check) in one figure, which is why it
+# read as sparse/unfocused however the individual panels were polished.
+# This version keeps only what belongs in the main text:
+#   - the design-schematic panel (old panel A) moves to the caption/Methods
 #   - the paired-replicate jitter plot (old panel D) moves to supplement
 #     as a robustness check, not main-figure content
 #   - the remaining "excess global strength over true" panel replaces the
 #     old absolute-scale panel B, which was forced to a huge y-range by
-#     including the "true" reference as a separate value on the same
-#     axis rather than differencing against it directly
+#     including the "true" reference as a separate value on the same axis
+#     rather than differencing against it directly
 #
 # Meant to sit alongside fig4_network_trio.R's output as Figure 4's full
 # panel set (network trio on top, this strip on the bottom), assembled in
 # LaTeX/Overleaf rather than composited in R -- qgraph's base-R graphics
-# and this file's ggplot objects aren't directly combinable via patchwork
-# without extra wiring (ggplotify::as.ggplot() / wrap_elements()), which
-# remains deferred, lower-priority work.
+# and this file's ggplot objects don't combine directly via patchwork
+# without extra wiring (ggplotify::as.ggplot() / wrap_elements()), left
+# as deferred, lower-priority work.
 #
 # Outputs
 # -------
@@ -51,21 +49,17 @@ by_arm <- read.csv("res/revision_2026/sim4/sim4_replicated_by_arm.csv") |>
 se <- function(x) sd(x) / sqrt(length(x))
 
 # ------------------------------------------------------------------------
-# 2026-08-25 readability pass, revised: this strip is now placed at the
-# SAME LaTeX width as the network trio (\textwidth, not 0.82\textwidth as
-# before) so panels D/E print noticeably larger and their error bars are
-# easier to read at a glance -- per review, page-width match was preferred
-# over a narrower, taller-relative-to-width strip. With both figures now
-# sharing the same width-based scale factor (approx 6.5/9.2 ~= 0.71, using
-# the trio's current 9.2in native width as the reference), the earlier
-# 13.3pt title override (calibrated for the narrower 0.67x placement) would
-# now overshoot and print LARGER than the trio's titles. Sizes below are
-# recalibrated down for the new, more favorable scale factor while still
-# landing at a comparable final size to the trio (~9pt titles).
-# Canvas native size bumped slightly (8.0x2.6 -> 8.4x2.75) so that, once
-# both figures share the same print width, this strip's height comes out
-# close to but slightly less than the trio's (native aspect ratio
-# 2.75/8.4 ~= 0.327 vs. the trio's current 3.1/9.2 ~= 0.337).
+# This strip is placed at the SAME LaTeX width as the network trio
+# (\textwidth, not 0.82\textwidth as before), so panels E/F print larger
+# and their error bars are easier to read. With both figures now sharing
+# the same width-based scale factor (~6.5/9.2 ~= 0.71, using the trio's
+# current 9.2in native width as reference), the earlier 13.3pt title
+# override (calibrated for the narrower 0.67x placement) would now
+# overshoot and print larger than the trio's titles, so sizes below are
+# recalibrated for the new scale factor. Canvas native size bumped
+# slightly (8.0x2.6 -> 8.4x2.75) so once both figures share the print
+# width, this strip's height comes out close to but slightly less than
+# the trio's.
 title_size_strip <- 12.0
 axis_title_strip <- 11.2
 axis_text_strip  <- 10.2
@@ -86,29 +80,28 @@ summary_by_arm <- by_arm |>
   summarise(
     coupling_mean = mean(total_coupling_est),
     coupling_se   = se(total_coupling_est),
-    
+
     spurious_mean = mean(spurious_abs_coupling),
     spurious_se   = se(spurious_abs_coupling),
-    
+
     .groups = "drop"
   )
 
 # ------------------------------------------------------------------------
-# Panel E: RAW estimated global strength (2026-08-27, replaces the
-# "excess" / estimated-minus-true version). The Results prose reports raw
-# global strength values (e.g. "6.45" for the symptom-only arm), not
-# differences from the true value -- plotting the difference made the
-# reader do an extra subtraction in their head to connect the figure back
-# to the text. Now panel E shows exactly the numbers in the prose, with a
-# dashed reference line at the data-generating value (true_gs=3.05) doing
-# the "how inflated is this" work visually instead of via a differenced
-# y-axis.
+# Panel E: raw estimated global strength (replaces an earlier "excess" /
+# estimated-minus-true version). The Results prose reports raw global
+# strength values (e.g. "6.45" for the symptom-only arm), not differences
+# from the true value -- plotting the difference made the reader do an
+# extra subtraction to connect the figure back to the text. Panel E now
+# shows exactly the prose numbers, with a dashed reference line at the
+# data-generating value (true_gs=3.05) doing the "how inflated is this"
+# work visually instead of via a differenced y-axis.
 #
-# NOTE: y-axis limits/breaks below (both panels) are FIXED per the
-# design-pass spec rather than computed from summary_by_arm, to remove
-# dead space above/below the points. If a future data refresh shifts
-# gs_mean/mtz_mean meaningfully, check the rendered PNG for clipped
-# points/error bars before trusting these fixed ranges again.
+# y-axis limits/breaks (both panels) are FIXED per the design-pass spec
+# rather than computed from summary_by_arm, to remove dead space above/
+# below the points. If a future data refresh shifts gs_mean/mtz_mean
+# meaningfully, check the rendered PNG for clipped points/error bars
+# before trusting these fixed ranges again.
 # ------------------------------------------------------------------------
 pE <- ggplot(
   summary_by_arm,
@@ -163,19 +156,18 @@ pE <- ggplot(
   )
 
 # ------------------------------------------------------------------------
-# Panel F: apparent edges among absent edges (2026-08-27, replaces the
-# MAE-on-absent-edges version). The count "|omega_hat| > 0.10 among
-# symptom pairs with true omega_ij=0" is a more concrete, directly
-# interpretable quantity than a mean-absolute-error number -- it's
-# literally "how many extra edges did this estimator draw where none
-# exist," matching the Results prose's phrasing exactly.
+# Panel F: apparent edges among absent edges (replaces the MAE-on-
+# absent-edges version). The count "|omega_hat| > 0.10 among symptom pairs
+# with true omega_ij=0" is more concrete than a mean-absolute-error
+# number -- it's literally "how many extra edges did this estimator draw
+# where none exist," matching the Results prose's phrasing directly.
 #
-# NOTE: y-axis limits/breaks are FIXED per the design-pass spec (see
-# panel E's note above for the same reasoning) -- CHECK THE RENDERED PNG
-# once this reruns, since phantom_mean's actual range wasn't recomputed
-# here (only naive~11.83 and adjusted~8.70 are known from the locked
-# Results text; the baseline arm's value isn't, and the 0-14 range below
-# is a generous guess, not a computed bound).
+# y-axis limits/breaks are FIXED per the design-pass spec (same reasoning
+# as panel E) -- check the rendered PNG once this reruns, since
+# phantom_mean's actual range wasn't recomputed here (only naive~11.83 and
+# adjusted~8.70 are known from the locked Results text; the baseline arm's
+# value isn't, and the 0-14 range below is a generous guess, not a
+# computed bound).
 # ------------------------------------------------------------------------
 pF <- ggplot(
   summary_by_arm,
@@ -234,10 +226,10 @@ ggsave(
 
 cat("Done. Files:\n")
 cat("  figs/revision_2026/Figure4_metric_strip.pdf (+ .png)\n")
-cat("\nIMPORTANT: this is now meant to be placed at \\textwidth in LaTeX, same\n")
-cat("as the network trio -- update the \\includegraphics line for this file\n")
-cat("from width=0.82\\textwidth to width=\\textwidth (or drop the width arg\n")
-cat("if the trio's own includegraphics doesn't specify one explicitly).\n")
+cat("\nThis is now meant to be placed at \\textwidth in LaTeX, same as the\n")
+cat("network trio -- update the \\includegraphics line for this file from\n")
+cat("width=0.82\\textwidth to width=\\textwidth (or drop the width arg if the\n")
+cat("trio's own includegraphics doesn't specify one explicitly).\n")
 cat("\nCombine with fig4_network_trio.R's output (Figure4_network_trio.pdf,\n")
 cat("panels A-C) as Figure 4's full panel set -- assembled in LaTeX/Overleaf,\n")
 cat("not composited in R (qgraph base-R graphics + ggplot don't combine\n")

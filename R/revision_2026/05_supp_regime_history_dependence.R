@@ -1,26 +1,23 @@
 # ============================================================
 # R/revision_2026/05_supp_regime_history_dependence.R
 # ============================================================
-# Supplementary regime check:
-# Can the revised 0/1 heterogeneous symptom-level slow-fast model show
-# tipping-like or history-dependent behavior under stronger feedback?
+# Supplementary regime check: can the revised 0/1 heterogeneous
+# symptom-level slow-fast model show tipping-like or history-dependent
+# behavior under stronger feedback?
 #
-# This is NOT part of the main four-simulation sequence.
-# It is a robustness / regime check replacing the old homogeneous
-# mean-field bistability figure.
+# NOT part of the main four-simulation sequence. This is a robustness/
+# regime check replacing the old homogeneous mean-field bistability figure.
 #
-# Main question:
-#   If we start the same system from a low-burden state versus a
-#   high-burden state, do trajectories converge to the same late state,
-#   or do they remain separated for a long time under stronger feedback?
+# Main question: start the same system from a low-burden state versus a
+# high-burden state -- do trajectories converge to the same late state, or
+# stay separated for a long time under stronger feedback?
 #
 # Interpretation:
-#   - If late low-start and high-start states overlap: no evidence of
-#     history dependence in that parameter regime.
-#   - If they remain separated: evidence for tipping-like/metastable
-#     behavior in the revised symptom-level model.
-#   - If P_t runs away to extreme values: call it runaway/saturation,
-#     not bistability.
+#   - late low-start and high-start states overlap: no evidence of history
+#     dependence in that parameter regime.
+#   - they stay separated: evidence for tipping-like/metastable behavior.
+#   - P_t runs off to extreme values: that's runaway/saturation, not
+#     bistability.
 # ============================================================
 
 suppressPackageStartupMessages({
@@ -37,8 +34,8 @@ set.seed(20260825)
 # ------------------------------------------------------------------------
 N <- length(tau)
 
-# Use the Simulation 1 middle-context mean active-symptom fraction as m_star.
-# Prefer reading from the actual Sim 1 summary if available.
+# Use the Simulation 1 middle-context mean active-symptom fraction as
+# m_star, reading from the actual Sim 1 summary when it's available.
 sim1_summary_path <- "res/revision_2026/sim1/sim1_summary.csv"
 if (file.exists(sim1_summary_path)) {
   sim1_summary <- read_csv(sim1_summary_path, show_col_types = FALSE)
@@ -53,8 +50,7 @@ if (file.exists(sim1_summary_path)) {
   m_star <- 0.28
 }
 
-# Slow-field parameters.
-# Keep kappa, sigma_P, and dt close to Simulations 2-3.
+# Slow-field parameters -- kept close to Simulations 2-3.
 P_base  <- 0
 kappa   <- 0.20
 sigma_P <- 0.04
@@ -63,13 +59,11 @@ dt      <- 0.02
 # Smoothing for symptom burden entering feedback.
 alpha_smooth <- 0.05
 
-# Feedback grid.
-# Current main simulation uses b = 0.50.
-# Here we test stronger regimes, but we do not assume they are clinically calibrated.
+# Feedback grid. The current main simulation uses b=0.50; here we test
+# stronger regimes without assuming they're clinically calibrated.
 # Densified from the original 6-point grid (0, .5, .75, 1, 1.25, 1.5) to a
-# 0.1-step grid for a smoother-looking regime-index plot (Figure 3 panel
-# C) -- 16 points instead of 6, ~2.7x the compute, but still tractable in
-# parallel.
+# 0.1-step grid for a smoother regime-index plot (Figure 3 panel C) -- 16
+# points instead of 6, ~2.7x the compute, still fine in parallel.
 b_grid <- seq(0, 1.5, by = 0.1)
 
 # Simulation horizon.
@@ -144,15 +138,13 @@ simulate_history_chain <- function(
 # ------------------------------------------------------------------------
 # 2. Run grid, in parallel
 # ------------------------------------------------------------------------
-# 6 b-values x 2 inits x 200 chains x 1500 steps = 2400 independent chains,
-# substantially more total work than Sim 3's 1000-chain run -- each
-# (b, init, chain) combination is an independent, embarrassingly-parallel
-# unit of work, so flatten into one task list and fork across cores with
-# mclapply() rather than looping serially via pmap_dfr(). Same pattern as
-# 03_sim_feedback.R / 04b_sim_network_estimation_replicated.R:
-# fork-based mclapply (macOS/Linux only) + "L'Ecuyer-CMRG" + mc.set.seed =
-# TRUE so each forked worker gets its own independent, reproducible RNG
-# substream instead of silently replaying the parent's stream.
+# 6 b-values x 2 inits x 200 chains x 1500 steps = 2400 independent chains --
+# each (b, init, chain) combination is independent, so flatten into one
+# task list and fork across cores with mclapply() rather than looping via
+# pmap_dfr(). Same pattern as 03_sim_feedback.R /
+# 04b_sim_network_estimation_replicated.R: fork-based mclapply (macOS/
+# Linux only) + "L'Ecuyer-CMRG" + mc.set.seed=TRUE so each worker gets its
+# own reproducible RNG substream instead of replaying the parent's stream.
 n_cores <- max(1, parallel::detectCores(logical = TRUE) - 1, na.rm = TRUE)
 cat(sprintf("Using %d cores.\n", n_cores))
 
@@ -181,9 +173,8 @@ run_task <- function(i) {
 chain_tbls <- parallel::mclapply(seq_len(n_tasks), run_task,
                                   mc.cores = n_cores, mc.set.seed = TRUE)
 
-# mclapply silently returns try-error objects for tasks that fail in a
-# worker rather than stopping the whole run -- check for that before
-# trusting the output.
+# mclapply returns try-error objects for tasks that fail in a worker
+# instead of stopping the whole run, so check for that before trusting output.
 failed <- vapply(chain_tbls, function(x) inherits(x, "try-error"), logical(1))
 if (any(failed)) {
   stop(sprintf("%d of %d parallel tasks failed. First error: %s",

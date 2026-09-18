@@ -1,57 +1,46 @@
 # ============================================================
 # R/revision_2026/03_sim_feedback.R
 # ============================================================
-# Simulation 3 (MAIN TEXT): same shock/recovery design as Simulation 2, but
-# with symptom-to-context feedback turned on. Compares b = 0 (Sim 2's
-# validated baseline) against b = 0.5, isolating the effect of feedback from
-# everything else, since fast layer, shock timing/magnitude, kappa, sigma_P,
-# and dt are all identical to Sim 2.
+# Simulation 3 (MAIN TEXT): same shock/recovery design as Sim 2, but with
+# symptom-to-context feedback on. Compares b=0 (Sim 2's baseline) against
+# b=0.5. Everything else -- fast layer, shock timing/magnitude, kappa,
+# sigma_P, dt -- is identical to Sim 2, so this isolates the feedback effect.
 #
-# b = 0.5 was selected after a pilot grid (b = 0.3/0.5/0.7; see
-# 03b_sim_feedback_grid_supplement.R) because it gives a visible feedback-
-# related delay in both P and symptom burden, while all trajectories still
-# decay toward baseline. The goal is persistence/slower recovery, not
-# bistability or runaway dynamics: b=0.3 alone was too subtle in symptom
-# burden (M: 2.58 off vs 2.71 on); b=0.7 gave the largest separation but
-# risks reading as tipping-like even though the trajectory is still decaying.
+# b=0.5 came out of a pilot grid (0.3/0.5/0.7, see
+# 03b_sim_feedback_grid_supplement.R): 0.3 was too subtle in symptom burden
+# (2.58 off vs 2.71 on), 0.7 gave the biggest separation but starts to read
+# as tipping-like even though it's still decaying. 0.5 is the middle
+# ground -- visible delay in both P and burden, still clearly recovering.
 #
 # Model:
 #   P_{t+dt} = P_t + kappa*(P_base - P_t)*dt + sigma_P*sqrt(dt)*eps_t
 #              + b*(m_smooth_t - m_star)*dt
-#   (shock applied as a one-off jump to P at shock_time, same as Sim 2)
+#   (shock = one-off jump to P at shock_time, same as Sim 2)
 #
-# 2026-08-27: switched from the positive-part clamp [m_smooth_t - m_star]_+
-# to the signed difference (m_smooth_t - m_star). Feedback is now symmetric:
-# elevated burden (m_smooth > m_star) pushes the slow field up, and burden
-# below m_star actively pulls P down (in addition to the kappa mean-
-# reversion term already doing so). All main-text equations/captions/tables
-# should describe this as the signed feedback term b*(m_bar_t - m_star), not
-# the clamped [.]_+ form used in the earlier design.
+# 2026-08-27: switched the feedback term from the positive-part clamp
+# [m_smooth_t - m_star]_+ to the signed difference. Now elevated burden
+# pushes P up and low burden pulls P down too (on top of kappa's mean
+# reversion). Describe this in the manuscript as signed feedback
+# b*(m_bar_t - m_star), not the old clamped version.
 #
 # Fast layer unchanged:
 #   logit Pr(S_i=1 | S_-i, P_t) = tau_i + sum_j!=i omega_ij S_j + gamma_i P_t
 #
-# m_smooth_t is an exponential moving average of the single-sweep symptom
-# fraction m_t = M_t/N. Feedback needs a smoothed signal because m_t from
-# a single fast sweep is noisy (this is the same reason Sim 1 averaged
-# over 200 post-burn-in sweeps rather than reading off one sweep); an EMA
-# is the cheapest way to get a low-noise, causally-laggable signal without
-# storing a full window.
+# m_smooth_t is an EMA of the single-sweep symptom fraction m_t = M_t/N.
+# Needed because m_t from one sweep alone is noisy (same reason Sim 1
+# averages 200 sweeps instead of reading one off) -- EMA is the cheap way
+# to get a low-noise, causally-laggable signal without storing a window.
 #
-# m_star is the reference ("no context effect") burden level: the P=0
-# equilibrium mean_m = 0.2766 from Sim 1's middle condition
-# (res/revision_2026/sim1/sim1_summary.csv). Choosing m_star this way
-# means the system starts already at its own b=0 fixed point (P=P_base=0,
-# m_smooth=m_star), so burn-in does not need to be extended for the
-# feedback case -- there's nothing to equilibrate away.
+# m_star = the P=0 equilibrium mean_m from Sim 1's middle condition
+# (0.2766389, res/revision_2026/sim1/sim1_summary.csv). Starting m_smooth
+# there means the system is already at its own b=0 fixed point, so no
+# extra burn-in is needed for the feedback case.
 #
-# b and the EMA smoothing constant (alpha_smooth) are pilot values, flagged
-# below, same calibration status as Sim 1's tau shift. b is chosen to be
-# clearly visible against the b=0 recovery curve (i.e., end-of-window
-# mean_P / mean_M should sit further from the pre-shock baseline than the
-# b=0 case) without letting the loop run away or create a second stable
-# state -- runaway/bistability/hysteresis is out of scope for this
-# simulation and is being deliberately avoided, not tested for.
+# b and alpha_smooth are pilot values, same calibration status as Sim 1's
+# tau shift. b is picked to be clearly visible against b=0 (end-of-window
+# mean_P/mean_M further from pre-shock baseline) without running away or
+# settling into a second stable state -- bistability/hysteresis isn't the
+# point here, it's deliberately avoided, not something this sim tests for.
 #
 # Outputs
 # -------
@@ -84,19 +73,18 @@ shock_time       <- burn_in_steps + 1L
 shock_magnitude  <- 1.0
 
 total_steps <- burn_in_steps + post_shock_steps
-n_chains    <- 1000L   # raised from 200 during calibration -- at 200 chains
-                        # the b=0.3 peak (first 20 post-shock steps) came out
-                        # lower than the b=0 peak (4.41 vs 4.73); at 1000
-                        # chains that gap disappeared (confirmed Monte Carlo
-                        # noise, not a real effect), so 1000 is kept as the
-                        # locked chain count for the main-text comparison.
+n_chains    <- 1000L   # raised from 200: at 200 chains the b=0.3 peak (first
+                        # 20 post-shock steps) came out lower than the b=0
+                        # peak (4.41 vs 4.73). At 1000 that gap disappeared
+                        # (Monte Carlo noise, not a real effect), so 1000 is
+                        # the locked chain count for the main-text comparison.
 
 # ------------------------------------------------------------------------
 # Feedback-specific parameters -- PILOT VALUES, calibrate against output
 # ------------------------------------------------------------------------
 m_star       <- 0.2766389   # Sim 1 middle-condition (P=0) equilibrium mean_m
 alpha_smooth <- 0.05        # EMA rate; half-life = ln(2)/alpha_smooth steps
-                             # ~= 13.9 steps ~= 0.28 time units at dt=0.02 --
+                             # ~13.9 steps, ~0.28 time units at dt=0.02 --
                              # fast enough to track the post-shock rise/decay,
                              # slow enough to average out single-sweep noise.
 
@@ -108,7 +96,7 @@ b_values <- c(off = 0, on = 0.5)   # LOCKED main-text comparison
 run_chain <- function(b) {
   P <- P_base
   S <- rbinom(N, size = 1, prob = 0.5)
-  m_smooth <- m_star   # start at the reference level (see header note)
+  m_smooth <- m_star   # start at the reference level, see header note
 
   P_trace  <- numeric(total_steps)
   M_trace  <- numeric(total_steps)
@@ -135,8 +123,7 @@ run_chain <- function(b) {
 
     # Slow recovery/diffusion + feedback for the next step.
     # Signed feedback (2026-08-27, replaces the earlier positive-part
-    # clamp): elevated burden (m_smooth > m_star) pushes P up, and burden
-    # below m_star pulls P down.
+    # clamp): elevated burden pushes P up, burden below m_star pulls it down.
     P <- P + kappa * (P_base - P) * dt + sigma_P * sqrt(dt) * rnorm(1) +
       b * (m_smooth - m_star) * dt
   }
@@ -146,16 +133,15 @@ run_chain <- function(b) {
 # ------------------------------------------------------------------------
 # Run all (feedback condition x chain) combinations in parallel
 # ------------------------------------------------------------------------
-# Each chain is an independent, embarrassingly-parallel unit of work, so we
-# flatten (condition, chain) into one task list and fork across cores with
-# mclapply() rather than looping serially per condition. mclapply is
-# fork-based (macOS/Linux only, which is what this repo is developed on);
-# it wouldn't work as-is on Windows.
+# Each chain is independent, so flatten (condition, chain) into one task
+# list and fork across cores with mclapply() instead of looping serially
+# per condition. mclapply is fork-based (macOS/Linux only -- won't work as
+# written on Windows).
 #
-# RNG note: forked workers inherit the parent's RNG state, so without care
-# every worker would draw the *same* random stream. Using the "L'Ecuyer-CMRG"
-# generator + mc.set.seed=TRUE gives each forked worker its own independent,
-# reproducible substream (the standard approach recommended in ?mclapply).
+# Forked workers inherit the parent's RNG state, so without care every
+# worker would draw the same random stream. "L'Ecuyer-CMRG" + mc.set.seed
+# gives each one its own independent, reproducible substream (standard
+# fix, see ?mclapply).
 
 n_cores <- max(1, parallel::detectCores(logical = TRUE) - 1, na.rm = TRUE)
 cat(sprintf("Using %d cores.\n", n_cores))
@@ -181,9 +167,8 @@ run_task <- function(i) {
 chain_tbls <- parallel::mclapply(seq_len(n_tasks), run_task,
                                   mc.cores = n_cores, mc.set.seed = TRUE)
 
-# mclapply silently returns try-error objects for tasks that fail in a
-# worker rather than stopping the whole run -- check for that before
-# trusting the output.
+# mclapply returns try-error objects for tasks that fail in a worker
+# instead of stopping the whole run, so check for that before trusting output.
 failed <- vapply(chain_tbls, function(x) inherits(x, "try-error"), logical(1))
 if (any(failed)) {
   stop(sprintf("%d of %d parallel tasks failed. First error: %s",
@@ -232,14 +217,13 @@ print(summary_tbl |> filter(time_since_shock >= post_shock_steps - 50) |>
         group_by(feedback) |>
         summarise(mean_P = mean(mean_P), mean_M = mean(mean_M), mean_m = mean(mean_m)))
 
-cat("\nCompare 'on' vs 'off': 'on' should sit further from the pre-shock\n")
-cat("baseline than 'off' at end-of-window (feedback slows/incompletes\n")
-cat("recovery), while still clearly decaying rather than plateaued or\n")
-cat("still rising -- we are not trying to induce bistability/hysteresis\n")
-cat("here, just a visibly slower/less complete recovery. This comparison\n")
-cat("is LOCKED (b=0.5, chosen via 03b_sim_feedback_grid_supplement.R); this\n")
-cat("script is for reproducing/re-checking the final main-text numbers, not\n")
-cat("for re-calibrating b.\n")
+cat("\n'on' should sit further from the pre-shock baseline than 'off' at\n")
+cat("end-of-window (feedback slows/incompletes recovery), while still\n")
+cat("clearly decaying rather than plateaued or rising -- not trying to\n")
+cat("induce bistability/hysteresis here, just slower/less complete recovery.\n")
+cat("This comparison is LOCKED (b=0.5, from 03b_sim_feedback_grid_supplement.R);\n")
+cat("this script reproduces/rechecks the final main-text numbers, it doesn't\n")
+cat("re-calibrate b.\n")
 
 # ------------------------------------------------------------------------
 # Figure: P_t / m_t trajectories, b=off vs b=on (0.5) overlaid -- MAIN FIGURE
