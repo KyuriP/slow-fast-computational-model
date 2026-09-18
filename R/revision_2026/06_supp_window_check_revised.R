@@ -104,6 +104,12 @@ n_reps   <- 5L            # Monte Carlo repeats of the same DGP, for SEs
 iu <- which(upper.tri(matrix(0, N, N)))
 true_omega_edges <- omega[iu]
 true_gs <- sum(abs(true_omega_edges))
+# All nonzero true couplings are positive (same design as Simulation 4),
+# so the signed sum equals the absolute sum here -- true_total_coupling
+# is kept as its own name because the summary/plotting code below reports
+# signed total coupling as the primary recovery metric, matching
+# Simulation 4's fix, while true_gs is kept only as a legacy diagnostic.
+true_total_coupling <- sum(true_omega_edges)
 
 n_cores <- max(1, parallel::detectCores(logical = TRUE) - 1, na.rm = TRUE)
 cat(sprintf("Using %d cores.\n", n_cores))
@@ -161,6 +167,11 @@ run_condition <- function(sigma_P_name, W_steps, rep) {
   tibble(
     sigma_P_level = sigma_P_name, sigma_P = sigma_P, W_steps = W_steps, rep = rep,
     sd_pbar = sd(Pbar),
+    total_naive = sum(omega_hat_naive[iu]),
+    total_adjusted = sum(omega_hat_adjusted[iu]),
+    spurious_naive = sum(abs(omega_hat_naive[iu][true_omega_edges == 0])),
+    spurious_adjusted = sum(abs(omega_hat_adjusted[iu][true_omega_edges == 0])),
+    # kept as diagnostics
     gs_naive = sum(abs(omega_hat_naive[iu])),
     gs_adjusted = sum(abs(omega_hat_adjusted[iu])),
     mae_naive_all = mean(abs(omega_hat_naive[iu] - true_omega_edges)),
@@ -203,13 +214,17 @@ saveRDS(list(results = results,
 summary_tbl <- results |>
   group_by(sigma_P_level, sigma_P, W_steps) |>
   summarise(across(
-    c(sd_pbar, gs_naive, gs_adjusted, mae_naive_all, mae_adjusted_all,
+    c(sd_pbar, total_naive, total_adjusted, spurious_naive, spurious_adjusted,
+      gs_naive, gs_adjusted, mae_naive_all, mae_adjusted_all,
       mae_naive_true_zero, mae_adjusted_true_zero,
       n_phantom_naive_gt_01, n_phantom_adjusted_gt_01),
     list(mean = mean, se = ~ sd(.x) / sqrt(length(.x))),
     .names = "{.col}_{.fn}"
   ), .groups = "drop") |>
   mutate(W_over_tauP = W_steps / tau_P_steps,
+         gap_total = total_naive_mean - total_adjusted_mean,
+         gap_spurious = spurious_naive_mean - spurious_adjusted_mean,
+         # kept as diagnostics
          gap_gs = gs_naive_mean - gs_adjusted_mean,
          gap_mae_true_zero = mae_naive_true_zero_mean - mae_adjusted_true_zero_mean)
 
@@ -217,21 +232,24 @@ write.csv(summary_tbl, "res/revision_2026/window_check/window_check_summary.csv"
 
 cat("\n=== SUMMARY (naive vs adjusted, by sigma_P and window length) ===\n")
 print(summary_tbl |> select(sigma_P_level, W_steps, W_over_tauP, sd_pbar_mean,
-                             gs_naive_mean, gs_adjusted_mean, gap_gs,
-                             mae_naive_true_zero_mean, mae_adjusted_true_zero_mean, gap_mae_true_zero))
+                             total_naive_mean, total_adjusted_mean, gap_total,
+                             spurious_naive_mean, spurious_adjusted_mean, gap_spurious))
 
-cat(sprintf("\ntrue global strength = %.2f\n", true_gs))
+cat(sprintf("\ntrue total coupling = %.2f\n", true_total_coupling))
 cat("\nCheck sd_pbar_mean first: if it doesn't decrease appreciably across\n")
 cat("W_steps within a sigma_P level, the window-averaging manipulation isn't\n")
-cat("doing anything at that diffusion scale, and gap_gs / gap_mae_true_zero\n")
+cat("doing anything at that diffusion scale, and gap_total / gap_spurious\n")
 cat("shouldn't be expected to shrink either -- a genuine, reportable null\n")
 cat("result at sigma_P=0.04 (the scale used in Sims 2-3), not a bug.\n")
 cat("Compare against sigma_P=0.65, which should show a visible sd_pbar\n")
 cat("decrease if the OU/window mechanics are working.\n")
-cat("\nDo NOT reuse the old manuscript's numbers (gap 12.3->10.8->7.7->3.9,\n")
-cat("mae 0.132->0.024) -- report whatever gap_gs / gap_mae_true_zero actually\n")
-cat("come out as here, even if the shape differs from the old (N=12,\n")
-cat("static-joint-sampler) design.\n")
+cat("\nReport whatever gap_total / gap_spurious actually come out as here --\n")
+cat("these replace the old absolute-global-strength gap_gs / gap_mae_true_zero\n")
+cat("as the primary recovery metrics, for the same reason as Simulation 4:\n")
+cat("summing |estimate| over true-zero edges makes symmetric sampling noise\n")
+cat("look like one-directional inflation. Do NOT reuse the pre-revision\n")
+cat("N=12 script's numbers (gap 12.3->10.8->7.7->3.9, mae 0.132->0.024) --\n")
+cat("those belong to a different model entirely.\n")
 
 # ------------------------------------------------------------------------
 # Figure: 3-panel summary, one column per sigma_P level, log10(W/tau_P) x-axis
@@ -264,26 +282,26 @@ panelA <- summary_tbl |>
   theme_pub_local()
 
 panelB <- summary_tbl |>
-  select(sigma_P_level, W_over_tauP, gs_naive_mean, gs_adjusted_mean) |>
-  pivot_longer(c(gs_naive_mean, gs_adjusted_mean), names_to = "estimator", values_to = "gs") |>
-  mutate(estimator = if_else(estimator == "gs_naive_mean", "Symptom-only", "Context-adjusted")) |>
-  ggplot(aes(W_over_tauP, gs, colour = estimator, linetype = sigma_P_level)) +
-  geom_hline(yintercept = true_gs, colour = "grey50", linetype = "dotted") +
+  select(sigma_P_level, W_over_tauP, total_naive_mean, total_adjusted_mean) |>
+  pivot_longer(c(total_naive_mean, total_adjusted_mean), names_to = "estimator", values_to = "total_coupling") |>
+  mutate(estimator = if_else(estimator == "total_naive_mean", "Symptom-only", "Context-adjusted")) |>
+  ggplot(aes(W_over_tauP, total_coupling, colour = estimator, linetype = sigma_P_level)) +
+  geom_hline(yintercept = true_total_coupling, colour = "grey50", linetype = "dotted") +
   geom_line() + geom_point(size = 1.8) +
   scale_x_log10() +
   scale_colour_manual(values = c("Symptom-only" = col_raw, "Context-adjusted" = col_adj)) +
-  labs(x = x_lab, y = "Estimated global strength", title = "(B) Global strength", colour = NULL, linetype = "sigma_P") +
+  labs(x = x_lab, y = "Estimated total coupling", title = "(B) Estimated total coupling", colour = NULL, linetype = "sigma_P") +
   theme_pub_local()
 
 panelC <- summary_tbl |>
-  select(sigma_P_level, W_over_tauP, mae_naive_true_zero_mean, mae_adjusted_true_zero_mean) |>
-  pivot_longer(c(mae_naive_true_zero_mean, mae_adjusted_true_zero_mean), names_to = "estimator", values_to = "mae") |>
-  mutate(estimator = if_else(estimator == "mae_naive_true_zero_mean", "Symptom-only", "Context-adjusted")) |>
-  ggplot(aes(W_over_tauP, mae, colour = estimator, linetype = sigma_P_level)) +
+  select(sigma_P_level, W_over_tauP, spurious_naive_mean, spurious_adjusted_mean) |>
+  pivot_longer(c(spurious_naive_mean, spurious_adjusted_mean), names_to = "estimator", values_to = "spurious") |>
+  mutate(estimator = if_else(estimator == "spurious_naive_mean", "Symptom-only", "Context-adjusted")) |>
+  ggplot(aes(W_over_tauP, spurious, colour = estimator, linetype = sigma_P_level)) +
   geom_line() + geom_point(size = 1.8) +
   scale_x_log10() +
   scale_colour_manual(values = c("Symptom-only" = col_raw, "Context-adjusted" = col_adj)) +
-  labs(x = x_lab, y = "Mean |deviation| on truly absent edges", title = "(C) Absent-edge deviation", colour = NULL, linetype = "sigma_P") +
+  labs(x = x_lab, y = "Spurious absolute coupling on true-zero edges", title = "(C) Spurious coupling on uncoupled pairs", colour = NULL, linetype = "sigma_P") +
   theme_pub_local()
 
 library(patchwork)

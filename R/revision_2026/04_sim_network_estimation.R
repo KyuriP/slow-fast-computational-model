@@ -174,12 +174,21 @@ saveRDS(list(edge_tbl = edge_tbl,
 summary_tbl <- edge_tbl |>
   group_by(arm) |>
   summarise(
-    mae_all      = mean(abs(error)),
+    total_coupling_true = sum(true_omega),
+    total_coupling_est  = sum(est_omega),
+
+    spurious_abs_coupling =
+      sum(abs(est_omega[!true_nonzero])),
+
+    mae_all = mean(abs(error)),
     mae_true_nonzero = mean(abs(error[true_nonzero])),
-    mae_true_zero     = mean(abs(error[!true_nonzero])),
-    global_strength_true = sum(abs(true_omega)),
-    global_strength_est  = sum(abs(est_omega)),
-    n_phantom_edges_gt_01 = sum(!true_nonzero & abs(est_omega) > 0.1),
+    mae_true_zero = mean(abs(error[!true_nonzero])),
+
+    # retained only as diagnostics
+    global_strength_est = sum(abs(est_omega)),
+    n_phantom_edges_gt_01 =
+      sum(!true_nonzero & abs(est_omega) > 0.1),
+
     .groups = "drop"
   )
 write.csv(summary_tbl, "res/revision_2026/sim4/sim4_summary.csv", row.names = FALSE)
