@@ -211,7 +211,7 @@ p2 <- ggplot(trace_all, aes(x = sweep, y = M)) +
   scale_colour_manual(values = pal_context, guide = "none") +
   labs(x = "Sweep", y = "Symptom activation (M)",
        title = sprintf("Simulation 1: burn-in trace (%d example chains per condition, bold = mean)", n_trace_chains),
-       subtitle = "Shaded region = burn-in, excluded from analysis. Traces should look the same on both sides.") +
+       subtitle = "Shaded region = burn-in, excluded from analysis.") +
   theme_pub()
 
 ggsave("figs/revision_2026/fig_sim1_burnin_trace.pdf", p2, width = 7.5, height = 7.5)
