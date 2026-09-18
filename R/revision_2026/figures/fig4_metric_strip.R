@@ -141,14 +141,14 @@ pE <- ggplot(
   scale_colour_manual(values = pal_arm, guide = "none") +
   scale_x_discrete(labels = arm_labels) +
   labs(
-    title = panel_title("E", "Estimated total coupling"),
+    title = "(E) Estimated total coupling",
     x = NULL,
-    y = "Estimated total coupling"
+    y = expression(paste("Total coupling (", Sigma * hat(omega)[ij], ")"))
   ) +
   theme_pub(base_size = 9.5) +
   theme(
     legend.position = "none",
-    plot.title = element_text(size = title_size_strip),
+    plot.title = element_text(size = title_size_strip, margin = margin(b = 5)),
     axis.title = element_text(size = axis_title_strip),
     axis.text = element_text(size = axis_text_strip),
     axis.text.x = element_text(size = axis_text_strip)
@@ -189,14 +189,14 @@ pF <- ggplot(
   scale_colour_manual(values = pal_arm, guide = "none") +
   scale_x_discrete(labels = arm_labels) +
   labs(
-    title = panel_title("F", "Spurious coupling among uncoupled pairs"),
+    title = "(F) Spurious coupling among uncoupled pairs",
     x = NULL,
-    y = "Absolute estimated coupling on true-zero edges"
+    y = expression(paste("Spurious coupling (", Sigma * group("|", hat(omega)[ij], "|"), ")"))
   ) +
   theme_pub(base_size = 9.5) +
   theme(
     legend.position = "none",
-    plot.title = element_text(size = title_size_strip),
+    plot.title = element_text(size = title_size_strip, margin = margin(b = 5)),
     axis.title = element_text(size = axis_title_strip),
     axis.text = element_text(size = axis_text_strip),
     axis.text.x = element_text(size = axis_text_strip)
@@ -210,14 +210,14 @@ ggsave(
   "figs/revision_2026/Figure4_metric_strip.pdf",
   fig4_metric_strip,
   width = 8.4,
-  height = 2.75
+  height = 3
 )
 
 ggsave(
   "figs/revision_2026/Figure4_metric_strip.png",
   fig4_metric_strip,
   width = 8.4,
-  height = 2.75,
+  height = 3.3,
   dpi = 300
 )
 
