@@ -6,8 +6,8 @@
 # from 3 to 4 networks):
 #   A true network | B baseline (fixed P) estimate | C symptom-only
 #   estimate | D context-adjusted estimate
-#   E estimated global strength (raw, with true value as a reference line)
-#   F number of apparent edges (|omega_hat|>0.10) among truly absent edges
+#   E estimated total coupling: sum_{i<j} omega_hat_ij
+#   F spurious absolute coupling on symptom pairs with true omega_ij = 0
 #
 # Replaces fig4_summary_panels.R as the quantitative half of Figure 4.
 # That earlier version tried to do three jobs (design schematic + summary
@@ -88,20 +88,19 @@ summary_by_arm <- by_arm |>
   )
 
 # ------------------------------------------------------------------------
-# Panel E: raw estimated global strength (replaces an earlier "excess" /
-# estimated-minus-true version). The Results prose reports raw global
-# strength values (e.g. "6.45" for the symptom-only arm), not differences
-# from the true value -- plotting the difference made the reader do an
-# extra subtraction to connect the figure back to the text. Panel E now
-# shows exactly the prose numbers, with a dashed reference line at the
-# data-generating value (true_gs=3.05) doing the "how inflated is this"
-# work visually instead of via a differenced y-axis.
+# Panel E: estimated total coupling (signed sum of estimated pairwise
+# couplings), with a dashed reference line at the data-generating value
+# (true_total_coupling=3.05). Using the signed sum rather than an
+# absolute-value global-strength statistic avoids the systematic upward
+# contribution that comes from summing |estimate| over true-zero edges,
+# where sampling noise is symmetric around zero but abs() makes all of it
+# positive.
 #
 # y-axis limits/breaks (both panels) are FIXED per the design-pass spec
 # rather than computed from summary_by_arm, to remove dead space above/
-# below the points. If a future data refresh shifts gs_mean/mtz_mean
-# meaningfully, check the rendered PNG for clipped points/error bars
-# before trusting these fixed ranges again.
+# below the points. If a future data refresh shifts coupling_mean/
+# spurious_mean meaningfully, check the rendered PNG for clipped points/
+# error bars before trusting these fixed ranges again.
 # ------------------------------------------------------------------------
 pE <- ggplot(
   summary_by_arm,
@@ -142,32 +141,30 @@ pE <- ggplot(
   scale_colour_manual(values = pal_arm, guide = "none") +
   scale_x_discrete(labels = arm_labels) +
   labs(
-    title = panel_title("E", "Estimated total coupling"),
+    title = "(E) Estimated total coupling",
     x = NULL,
-    y = "Estimated total coupling"
+    y = expression(paste("Total coupling (", Sigma * hat(omega)[ij], ")"))
   ) +
   theme_pub(base_size = 9.5) +
   theme(
     legend.position = "none",
-    plot.title = element_text(size = title_size_strip),
+    plot.title = element_text(size = title_size_strip, margin = margin(b = 5)),
     axis.title = element_text(size = axis_title_strip),
     axis.text = element_text(size = axis_text_strip),
     axis.text.x = element_text(size = axis_text_strip)
   )
 
 # ------------------------------------------------------------------------
-# Panel F: apparent edges among absent edges (replaces the MAE-on-
-# absent-edges version). The count "|omega_hat| > 0.10 among symptom pairs
-# with true omega_ij=0" is more concrete than a mean-absolute-error
-# number -- it's literally "how many extra edges did this estimator draw
-# where none exist," matching the Results prose's phrasing directly.
+# Panel F: spurious absolute coupling summed across symptom pairs whose
+# true (data-generating) omega_ij is zero. More directly tied to the
+# recovery question than a mean-absolute-error number -- it's literally
+# how much coupling the estimator attributes to pairs that aren't coupled
+# at all.
 #
 # y-axis limits/breaks are FIXED per the design-pass spec (same reasoning
 # as panel E) -- check the rendered PNG once this reruns, since
-# phantom_mean's actual range wasn't recomputed here (only naive~11.83 and
-# adjusted~8.70 are known from the locked Results text; the baseline arm's
-# value isn't, and the 0-14 range below is a generous guess, not a
-# computed bound).
+# spurious_mean's actual range depends on the current replicated-run
+# output and wasn't recomputed here.
 # ------------------------------------------------------------------------
 pF <- ggplot(
   summary_by_arm,
@@ -192,14 +189,14 @@ pF <- ggplot(
   scale_colour_manual(values = pal_arm, guide = "none") +
   scale_x_discrete(labels = arm_labels) +
   labs(
-    title = panel_title("F", "Spurious coupling among uncoupled pairs"),
+    title = "(F) Spurious coupling among uncoupled pairs",
     x = NULL,
-    y = "Absolute estimated coupling on true-zero edges"
+    y = expression(paste("Spurious coupling (", Sigma * group("|", hat(omega)[ij], "|"), ")"))
   ) +
   theme_pub(base_size = 9.5) +
   theme(
     legend.position = "none",
-    plot.title = element_text(size = title_size_strip),
+    plot.title = element_text(size = title_size_strip, margin = margin(b = 5)),
     axis.title = element_text(size = axis_title_strip),
     axis.text = element_text(size = axis_text_strip),
     axis.text.x = element_text(size = axis_text_strip)
@@ -213,14 +210,14 @@ ggsave(
   "figs/revision_2026/Figure4_metric_strip.pdf",
   fig4_metric_strip,
   width = 8.4,
-  height = 2.75
+  height = 3
 )
 
 ggsave(
   "figs/revision_2026/Figure4_metric_strip.png",
   fig4_metric_strip,
   width = 8.4,
-  height = 2.75,
+  height = 3.3,
   dpi = 300
 )
 
@@ -231,6 +228,6 @@ cat("network trio -- update the \\includegraphics line for this file from\n")
 cat("width=0.82\\textwidth to width=\\textwidth (or drop the width arg if the\n")
 cat("trio's own includegraphics doesn't specify one explicitly).\n")
 cat("\nCombine with fig4_network_trio.R's output (Figure4_network_trio.pdf,\n")
-cat("panels A-C) as Figure 4's full panel set -- assembled in LaTeX/Overleaf,\n")
+cat("panels A-D) as Figure 4's full panel set -- assembled in LaTeX/Overleaf,\n")
 cat("not composited in R (qgraph base-R graphics + ggplot don't combine\n")
 cat("directly via patchwork without ggplotify/wrap_elements wiring).\n")

@@ -99,29 +99,29 @@ short_labels <- unname(phq_abbrev[symptoms])
 stopifnot(!anyNA(short_labels))  # catch silently if `symptoms` ever changes
 
 # ------------------------------------------------------------------------
-# Phantom-edge highlighting: the main content addition of this design
+# Spurious-edge highlighting: the main content addition of this design
 # pass. Previously every edge in every panel was the same blue (posCol),
 # so the reader had to compare panels side by side to notice that the
 # symptom-only (P omitted) panel fabricates extra coupling. Now: edges
 # real in the true network stay blue; edges that appear in an ESTIMATED
-# panel but don't exist in the true network ("phantom" edges -- abs(W_true)
-# below the plotting threshold while the estimate clears it) are drawn in
-# orange, the same colour already used for the naive/symptom-only
-# estimator elsewhere in this figure set (col_naive from
-# theme_publication.R), so the colour carries the "this is what naive
-# estimation gets wrong" meaning across the whole figure, not just this
-# one panel. Genuine negative edges keep the locked negCol, matching
-# qgraph's normal sign-based coloring. Applied to both estimated panels
-# (naive and adjusted) with the same rule -- the adjusted panel should
-# show few or no phantom edges, and seeing that directly is the point.
+# panel but don't exist in the true network (estimated couplings on
+# true-zero pairs exceeding the plotting threshold) are drawn in orange,
+# the same colour already used for the naive/symptom-only estimator
+# elsewhere in this figure set (col_naive from theme_publication.R), so
+# the colour carries the "this is what naive estimation gets wrong"
+# meaning across the whole figure, not just this one panel. Genuine
+# negative edges keep the locked negCol, matching qgraph's normal
+# sign-based coloring. Applied to both estimated panels (naive and
+# adjusted) with the same rule -- the adjusted panel should show few or
+# no such edges, and seeing that directly is the point.
 # ------------------------------------------------------------------------
-phantom_col <- col_naive
+spurious_col <- col_naive
 
 build_edge_colors <- function(W_est, W_true_ref) {
   cmat <- matrix(qgraph_pos_col, nrow(W_est), ncol(W_est))
   cmat[W_est < 0] <- qgraph_neg_col
-  is_phantom <- (abs(W_true_ref) < plot_min) & (abs(W_est) >= plot_min)
-  cmat[is_phantom] <- phantom_col
+  is_spurious <- (abs(W_true_ref) < plot_min) & (abs(W_est) >= plot_min)
+  cmat[is_spurious] <- spurious_col
   cmat
 }
 
@@ -245,8 +245,8 @@ cat("\nDone. Files:\n")
 cat("  figs/revision_2026/Figure4_network_trio.pdf (+ .png)\n")
 
 cat("\nNote: symptom labels are PHQ-9-style abbreviations (", paste(short_labels, collapse=", "),
-    ").\nOrange edges = phantom couplings (absent in the true network, but\n",
-    "cross the plotting threshold in that panel's estimate).\n", sep = "")
+    ").\nOrange edges = estimated couplings on true-zero pairs (absent in the\n",
+    "true network) exceeding the plotting threshold in that panel's estimate.\n", sep = "")
 
 cat("\nCheck the rendered PNG: qgraph's edge.color argument is being passed a\n")
 cat("full NxN matrix (build_edge_colors()) rather than a vector -- this is a\n")

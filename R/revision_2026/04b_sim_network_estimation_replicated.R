@@ -16,9 +16,10 @@
 #   naive    -- n_person people at P_i ~ Uniform(P_range), estimator omits P
 #   adjusted -- identical data to naive, estimator conditions on P_i
 #
-# n_person per replicate is lower than the single-run pilot's 10000 (see
-# note below). Averaging over replicates recovers the precision a single
-# large run would give, without needing n_reps x 10000 people.
+# n_person per replicate matches the single-run pilot (10000, see note
+# below) -- n_reps=30 replicates of that same size is what turns the
+# pilot's single naive-vs-adjusted gap into a mean +/- SE across
+# independent replicates.
 #
 # Outputs
 # -------
@@ -46,14 +47,14 @@ source("R/revision_2026/00_parameters_uncentered01.R")  # tau (+1.3 shift), omeg
 # ------------------------------------------------------------------------
 T_burn   <- 200L
 n_reps   <- 30L
-n_person <- 10000L   # per arm, per replicate. Averaging over n_reps=30
-                     # replicates shrinks the SE of the mean by ~sqrt(30)
-                     # ~5.5x regardless of per-replicate noise, so 3000 was
-                     # picked as a middle ground so the whole replicated run
-                     # doesn't cost 30x what the 10000-person pilot cost.
-                     # If replicate-level SEs below come out too wide, raise
-                     # this rather than n_reps (n_reps mainly buys a cleaner
-                     # mean and a %-positive check, not raw precision).
+n_person <- 10000L   # per arm, per replicate; matches the sample size
+                     # established in the single-run pilot
+                     # (04_sim_network_estimation.R) to keep nodewise
+                     # estimates stable. Averaging across n_reps=30
+                     # replicates on top of that is what shrinks the SE of
+                     # the mean naive-adjusted gap, not a smaller
+                     # per-replicate n. If replicate-level SEs below come
+                     # out too wide, raise n_reps first.
 
 P_fixed <- 0
 P_range <- c(-0.6, 0.6)
@@ -247,23 +248,29 @@ print(summary_by_arm)
 cat("\n=== NAIVE - ADJUSTED PAIRED DIFFERENCE (mean +/- SE across", n_reps, "replicates) ===\n")
 print(summary_diff)
 
-cat("\npct_reps_naive_gt_adjusted_gs and _mtz should be high (ideally close to\n")
-cat("100) -- that's the direct answer to 'is naive > adjusted consistently,\n")
-cat("or just in one lucky/unlucky run'. If clearly >50% and the mean diff is\n")
-cat("many SEs from zero, I'm calling Simulation 4 locked. If\n")
-cat("it's closer to 50%, the confounding effect isn't robust at this\n")
-cat("n_person/P_range and needs a stronger design (more n_person, wider\n")
-cat("P_range), not just more replicates.\n")
+cat("\npct_reps_naive_gt_adjusted_total and _spurious should be high\n")
+cat("(ideally close to 100). These quantify whether omitting P consistently\n")
+cat("increases signed total coupling and spurious absolute coupling on\n")
+cat("truly uncoupled symptom pairs across replicates -- that's the direct\n")
+cat("answer to 'is naive > adjusted consistently, or just in one\n")
+cat("lucky/unlucky run'. If clearly >50% and the mean diff is many SEs from\n")
+cat("zero, I'm calling Simulation 4 locked. If it's closer to 50%, the\n")
+cat("confounding effect isn't robust at this n_person/P_range and needs a\n")
+cat("stronger design, not just more replicates.\n")
 
 # ------------------------------------------------------------------------
-# Figure: per-replicate naive-adjusted gap (global strength, mae_true_zero)
+# Figure: per-replicate naive-adjusted gap (total coupling, spurious coupling)
 # ------------------------------------------------------------------------
 diff_long <- diff_all |>
-  select(rep, diff_global_strength, diff_mae_true_zero) |>
+  select(rep, diff_total_coupling, diff_spurious_abs_coupling) |>
   pivot_longer(-rep, names_to = "metric", values_to = "value") |>
-  mutate(metric = recode(metric,
-                          diff_global_strength = "naive - adjusted:\nglobal strength",
-                          diff_mae_true_zero  = "naive - adjusted:\nMAE (true-zero edges)"))
+  mutate(metric = recode(
+    metric,
+    diff_total_coupling =
+      "naive - adjusted:\ntotal coupling",
+    diff_spurious_abs_coupling =
+      "naive - adjusted:\nspurious coupling"
+  ))
 
 p1 <- ggplot(diff_long, aes(x = metric, y = value)) +
   geom_hline(yintercept = 0, linetype = "dashed", colour = "grey50") +
