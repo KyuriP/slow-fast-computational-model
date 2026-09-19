@@ -1,4 +1,11 @@
-# Slow–Fast Coupling: A Heterogeneous-Threshold Symptom Network Under Context Dynamics
+<h1 align="center">When Context Looks Like Coupling</h1>
+<p align="center"><em>A Slow&ndash;Fast Framework for Psychological Dynamics</em></p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/language-R-276DC3?logo=r&logoColor=white" alt="Language: R">
+  <img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="License: GPL-3.0">
+  <img src="https://img.shields.io/badge/status-under%20review-yellow" alt="Status: under review">
+</p>
 
 <p align="center">
   <img src="figs/slow-fast-model-illustration_v2.png" width="650" alt="Slow-fast model schematic: a fast binary symptom network S_i,t coupled to a slower context process P_t, with feedback from the network back to context">
@@ -10,7 +17,7 @@ a slow–fast computational model in which a fast binary symptom network (hetero
 slower Ornstein–Uhlenbeck contextual process `P_t`, with optional feedback from symptoms back to
 context and acute shocks.
 
-The manuscript itself ("When Context Looks Like Coupling: A Slow–Fast Theory of Psychological
+The manuscript itself ("When Context Looks Like Coupling: A Slow–Fast Framework for Psychological
 Dynamics") is written and maintained in Overleaf and is not tracked in this repository. This
 repo holds the simulation code, cached results, and the figures generated from them.
 
