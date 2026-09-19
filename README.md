@@ -32,11 +32,11 @@ cited by, the current manuscript.
 ## Repository structure
 
 ```
-slow-fast-computational-model/
+slow-fast-coupled-dynamics-model/
 ├── README.md
 ├── .gitignore
 ├── LICENSE
-├── slow-fast-computational-model.Rproj
+├── slow-fast-coupled-dynamics-model.Rproj
 │
 ├── R/
 │   ├── revision_2026/                              CURRENT model — everything below is used
