@@ -1,5 +1,9 @@
 # Slow–Fast Coupling: A Heterogeneous-Threshold Symptom Network Under Context Dynamics
 
+<p align="center">
+  <img src="figs/slow-fast-model-illustration_v2.png" width="650" alt="Slow-fast model schematic: a fast binary symptom network S_i,t coupled to a slower context process P_t, with feedback from the network back to context">
+</p>
+
 This repository contains the simulation code, cached results, and figure-generation scripts for
 a slow–fast computational model in which a fast binary symptom network (heterogeneous thresholds
 `tau_i`, symptom–symptom coupling `omega_ij`, context sensitivity `gamma_i`) is coupled to a
@@ -32,6 +36,8 @@ slow-fast-computational-model/
 │   │   ├── 00_parameters_uncentered01.R             tau_i, omega_ij, gamma_i for all 9 symptoms
 │   │   ├── 01_sim_context_baseline.R                Simulation 1: context shifts symptom activation
 │   │   ├── 02_sim_stress_recovery.R                 Simulation 2: P_t dynamics + single shock, feedback off
+│   │   ├── 02b_sim_stress_recovery_coupling_sensitivity.R  Appendix: does coupling strength change recovery?
+│   │   ├── 02c_sim2_coupling_sensitivity_figure.R   Re-plots 02b's output as the final appendix figure
 │   │   ├── 03_sim_feedback.R                        Simulation 3 (main text): feedback on vs. off
 │   │   ├── 03b_sim_feedback_grid_supplement.R        Supplement: b calibration grid
 │   │   ├── 03c_sim_feedback_shock_grid_extended.R    Extends Sim 2/3 shock design across the b grid
@@ -81,6 +87,10 @@ and writes to `figs/revision_2026/`.
   (Figure 2).
 * `02_sim_stress_recovery.R` — **Simulation 2**: adds the full `P_t` OU process (mean reversion +
   diffusion) plus a single acute shock, feedback off (`b = 0`).
+* `02b_sim_stress_recovery_coupling_sensitivity.R` / `02c_sim2_coupling_sensitivity_figure.R` —
+  **Appendix**: checks whether the strength of symptom-symptom coupling changes how fast the
+  system recovers from the Simulation 2 shock; `02c` re-plots `02b`'s cached output as the final,
+  three-condition appendix figure.
 * `03_sim_feedback.R` — **Simulation 3 (main text)**: same shock/recovery design as Simulation 2,
   comparing feedback off vs. on (`b = 0.5`) to isolate the effect of symptom-to-context feedback
   (Figure 3).
@@ -106,9 +116,9 @@ and writes to `figs/revision_2026/`.
 |---|---|
 | `figs/slow-fast-model-illustration_v2.png` | Figure 1 — model schematic |
 | `Figure2_context_baseline.pdf` | Figure 2 — context shifts symptom activation (Simulation 1) |
-| `Figure3_recovery_feedback.pdf` / `Figure3_regimes.pdf` | Figure 3 — stress, recovery, and feedback (Simulations 2–3) |
+| `Figure3_perturbation_recovery.pdf` / `Figure3_regimes.pdf` | Figure 3 — stress, recovery, and feedback (Simulations 2–3); `Figure3_regimes.pdf` also folds in the history-dependence check |
 | `Figure4_network_trio.pdf` + `Figure4_metric_strip.pdf` | Figure 4 — true vs. estimated symptom networks (Simulation 4) |
-| `FigureS_history_dependence.pdf` | Supplement — history-dependence check |
+| `fig_sim2_coupling_sensitivity.pdf` + `fig_sim2_coupling_criticality_check.pdf` | Appendix — sensitivity of recovery to symptom-coupling strength |
 | `Figure_S_window_check_revised.pdf` | Appendix B — observation-window check |
 | `figs/nct_structure_weighted.pdf`, `nct_strength_weighted.pdf`, `nct_edge_fp_weighted.pdf` | Appendix C — supplementary NCT robustness check |
 
